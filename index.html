@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -335,7 +336,7 @@ async function startQuiz(){
   } catch (e) {
     if (my !== token) return;
     busy = false; progressText = ""; $("q-start").disabled = false;
-    fail(e && e.code === "rate_limited" ? "Too many requests. Wait a minute and try again." : e && e.code === "not_granted" ? "Quiz creation needs permission to ask Claude. Allow it and try again." : "Couldn't finish covering the whole file. Try again.");
+    fail(e && e.code === "rate_limited" ? "Too many requests. Wait a minute and try again." : e && e.code === "not_granted" ? "Quiz creation needs permission to ask Claude. Allow it and try again." : "Couldn't finish covering the whole file. " + (e && e.message && e.message !== "server" ? e.message : "Try again."));
     if (fromRun){ qType = quiz.type; drawTypes(); drawQ(); }
   }
 }
