@@ -52,7 +52,7 @@ export default async function handler(req, res){
   const data = await up.json().catch(() => ({}));
   if (!up.ok){
     if (up.status === 429) return res.status(429).json({ error: "AI service is busy. Try again soon.", code: "rate_limited" });
-    return res.status(502).json({ error: "AI service error.", code: "server" });
+    return res.status(502).json({ error: "AI service error: " + ((data.error && data.error.message) || ("HTTP " + up.status)), code: "server" });
   }
   const text = ((data.candidates || [])[0]?.content?.parts || []).map(p => p.text || "").join("");
   if (!text) return res.status(502).json({ error: "AI service returned no text.", code: "server" });
