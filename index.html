@@ -92,11 +92,23 @@ li.done .note{color:var(--done)}
 .fb.no{color:var(--late)}
 #q-saved .card,#q-saved{background:transparent;border:none;box-shadow:none}
 #q-saved .card{background:var(--surface);border:2px solid var(--line);border-radius:18px;box-shadow:5px 5px 0 var(--line)}
+/* ---- Light/dark theme + question editor ---- */
+:root:root{--on:#2B2140;--donebg:#F1FBF6}
+:root[data-theme="dark"]:root{--bg:#1B1530;--surface:#271F40;--ink:#F3EEFF;--muted:#B9AED6;--line:#9C8FC4;--accent:#FF8A6B;--pop:#F5C443;--mint:#5FBF9A;--sky:#3A4F86;--done:#5ED3A0;--late:#FF7B85;--on:#1B1530;--donebg:#1F3A36;color-scheme:dark}
+.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+button{color:var(--on)}
+button.ghost{color:var(--ink)}
+.tile b,.tabs button[aria-pressed="true"],.types button[aria-pressed="true"],.answers button.right,.answers button.wrong{color:var(--on)}
+li.done{background:var(--donebg)}
+.row input[type=radio]{flex:0 0 auto;width:auto;accent-color:var(--accent)}
+.editor{display:grid;gap:12px;margin-top:6px}
+.editor textarea,.editor input[type=text]{font:inherit;color:var(--ink);background:var(--surface);border:2px solid var(--line);border-radius:12px;padding:10px;width:100%}
+#theme{white-space:nowrap}
 </style>
 </head>
 <body>
 <main>
-  <h1>SupStudy</h1>
+  <div class="top"><h1>SupStudy</h1><button id="theme" class="ghost" type="button">Dark mode</button></div>
   <nav class="tabs"><button type="button" id="t-a" aria-pressed="true">Assignments</button><button type="button" id="t-q" aria-pressed="false">New quiz</button><button type="button" id="t-l" aria-pressed="false">Library</button><button type="button" id="t-r" aria-pressed="false" hidden>Quiz</button></nav>
   <div id="tab-a">
   <p class="sub">Sorted by deadline. Saved in this browser.</p>
@@ -399,7 +411,9 @@ function drawQ(){
   if (!quiz){ run.append(el("p", "note", "No quiz open. Create one, or start one from your library.")); return; }
   run.append(nameBar());
   if (runErr) run.append(el("div", "fb no", runErr));
+  if (!quiz.questions.length){ run.append(el("p", "note", "No questions left in this quiz."), toolsRow(true)); return; }
   if (qi >= quiz.questions.length){ drawResult(run); return; }
+  run.append(toolsRow(false));
   const q = quiz.questions[qi], t = quiz.type;
   answered = false;
   run.append(el("div", "note", "Question " + (qi + 1) + " of " + quiz.questions.length), el("p", "qtext", q.q));
@@ -441,6 +455,100 @@ function drawQ(){
   }
 }
 
+function syncLib(){
+  const e = quiz && quiz.savedId ? saved.find(s => s.id === quiz.savedId) : null;
+  if (!e) return;
+  e.questions = quiz.questions; e.type = quiz.type;
+  if (!persist()) runErr = "Couldn't save your changes: browser storage is full.";
+}
+function toolsRow(empty){
+  const row = el("div", "row");
+  if (!empty){
+    const ed = el("button", "ghost", "Edit this question"); ed.onclick = () => editorFor(qi);
+    const del = el("button", "ghost", "Delete question");
+    del.onclick = () => {
+      if (del.dataset.arm){
+        quiz.questions.splice(qi, 1);
+        if (qi >= quiz.questions.length) qi = Math.max(0, quiz.questions.length - 1);
+        syncLib(); drawQ();
+      } else { del.dataset.arm = "1"; del.textContent = "Confirm delete"; }
+    };
+    row.append(ed, del);
+  }
+  const add = el("button", "ghost", "Add question"); add.onclick = () => editorFor(quiz.questions.length);
+  row.append(add);
+  return row;
+}
+function blankQ(t){
+  if (t === "multiple_choice") return { q: "", options: ["", "", "", ""], answer: 0, why: "" };
+  if (t === "true_false") return { q: "", answer: true, why: "" };
+  return { q: "", answer: "", alt: [], why: "" };
+}
+function labelled(text, control){ const l = el("label", "", text); l.append(control); return l; }
+function editorFor(index){
+  const isNew = index >= quiz.questions.length;
+  const q0 = isNew ? blankQ(quiz.type) : quiz.questions[index];
+  const t = quiz.type;
+  const run = $("q-body"); run.replaceChildren();
+  const form = el("div", "editor");
+  form.append(el("div", "course", isNew ? "New question" : "Edit question " + (index + 1)));
+  const qIn = document.createElement("textarea"); qIn.rows = 3; qIn.value = q0.q || "";
+  form.append(labelled("Question", qIn));
+  let getAnswer;
+  if (t === "multiple_choice"){
+    const opts = (q0.options || []).slice(); while (opts.length < 4) opts.push("");
+    const group = "correct-" + Date.now(), rows = [];
+    opts.forEach((txt, i) => {
+      const r = document.createElement("input"); r.type = "radio"; r.name = group; r.checked = i === q0.answer;
+      r.setAttribute("aria-label", "Correct option " + (i + 1));
+      const tx = document.createElement("input"); tx.type = "text"; tx.value = txt; tx.placeholder = "Option " + (i + 1);
+      tx.setAttribute("aria-label", "Option " + (i + 1));
+      const row = el("div", "row"); row.append(r, tx); form.append(row); rows.push({ r, tx });
+    });
+    form.append(el("div", "note", "Tap the circle next to the correct option. Leave an option blank to remove it."));
+    getAnswer = () => {
+      const kept = rows.map(x => ({ text: x.tx.value.trim(), correct: x.r.checked })).filter(x => x.text);
+      if (kept.length < 2) return "Add at least two options.";
+      const ci = kept.findIndex(x => x.correct);
+      if (ci < 0) return "Choose which option is correct.";
+      return { q: qIn.value.trim(), options: kept.map(x => x.text), answer: ci };
+    };
+  } else if (t === "true_false"){
+    const group = "tf-" + Date.now();
+    const yes = document.createElement("input"); yes.type = "radio"; yes.name = group; yes.checked = q0.answer === true;
+    const no = document.createElement("input"); no.type = "radio"; no.name = group; no.checked = q0.answer === false;
+    const yRow = el("label", "row"); yRow.append(yes, document.createTextNode(" True"));
+    const nRow = el("label", "row"); nRow.append(no, document.createTextNode(" False"));
+    form.append(yRow, nRow);
+    getAnswer = () => (yes.checked || no.checked) ? { q: qIn.value.trim(), answer: yes.checked } : "Choose True or False.";
+  } else {
+    const aIn = document.createElement("input"); aIn.type = "text"; aIn.value = q0.answer || "";
+    const altIn = document.createElement("input"); altIn.type = "text"; altIn.value = (q0.alt || []).join(", ");
+    form.append(labelled(t === "fill_blank" ? "Missing word or phrase" : "Correct term", aIn));
+    form.append(labelled("Other accepted answers (comma separated, optional)", altIn));
+    getAnswer = () => ({ q: qIn.value.trim(), answer: aIn.value.trim(), alt: altIn.value.split(",").map(s => s.trim()).filter(Boolean) });
+  }
+  const whyIn = document.createElement("textarea"); whyIn.rows = 2; whyIn.value = q0.why || "";
+  form.append(labelled("Explanation shown after answering (optional)", whyIn));
+  const msg = el("div", "fb no");
+  const save = el("button", "", "Save question"), cancel = el("button", "ghost", "Cancel");
+  save.onclick = () => {
+    const base = getAnswer();
+    if (typeof base === "string"){ msg.textContent = base; return; }
+    if (!base.q){ msg.textContent = "The question can't be empty."; return; }
+    const q = Object.assign({}, base, { why: whyIn.value.trim() });
+    if (!valid(q, t)){ msg.textContent = "Fill in the answer."; return; }
+    if (isNew) quiz.questions.push(q); else quiz.questions[index] = q;
+    qi = isNew ? quiz.questions.length - 1 : index;
+    syncLib(); drawQ();
+  };
+  cancel.onclick = () => drawQ();
+  const btns = el("div", "row"); btns.append(save, cancel);
+  form.append(msg, btns);
+  run.append(form);
+  qIn.focus();
+}
+
 function drawResult(run){
   const n = quiz.questions.length;
   run.append(el("p", "qtext", "You got " + score + " of " + n + " (" + Math.round(score / n * 100) + "%)."));
@@ -451,7 +559,8 @@ function drawResult(run){
   const row = el("div", "row"), again = el("button", "", "Retake"), lib = el("button", "ghost", "Library"), nw = el("button", "ghost", "New quiz");
   again.onclick = () => { qi = 0; score = 0; missed = []; runErr = ""; drawQ(); };
   lib.onclick = () => showTab("l"); nw.onclick = () => showTab("q");
-  row.append(again, lib, nw); run.append(row);
+  const ed = el("button", "ghost", "Edit questions"); ed.onclick = () => { qi = 0; drawQ(); };
+  row.append(again, ed, lib, nw); run.append(row);
 }
 
 function drawSaved(){
@@ -499,10 +608,19 @@ $("q-file").addEventListener("change", async e => {
 });
 $("q-text").addEventListener("input", () => { quizName = ""; });
 $("q-start").onclick = startQuiz;
+function applyTheme(t){
+  document.documentElement.setAttribute("data-theme", t);
+  $("theme").textContent = t === "dark" ? "Light mode" : "Dark mode";
+  try { localStorage.setItem("theme-v1", t); } catch (e) {}
+}
+$("theme").onclick = () => applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark");
+let savedTheme = null; try { savedTheme = localStorage.getItem("theme-v1"); } catch (e) {}
+applyTheme(savedTheme === "dark" ? "dark" : "light");
 drawTypes();
 drawQ();
 
 render();
 </script>
+
 </body>
 </html>
