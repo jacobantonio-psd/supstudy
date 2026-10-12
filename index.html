@@ -630,23 +630,40 @@ $("q-file").addEventListener("change", async e => {
 $("q-text").addEventListener("input", () => { quizName = ""; });
 $("q-start").onclick = startQuiz;
 const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-function setThemeNow(t){
-  document.documentElement.setAttribute("data-theme", t);
-  $("theme").textContent = t === "dark" ? "Light mode" : "Dark mode";
-  try { localStorage.setItem("theme-v1", t); } catch (e) {}
+const darkQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+const THEME_LABEL = { system: "Auto", light: "Light", dark: "Dark" };
+let themePref = "system";
+try { const s = localStorage.getItem("theme-v1"); if (s === "light" || s === "dark" || s === "system") themePref = s; } catch (e) {}
+function effectiveTheme(){
+  if (themePref !== "system") return themePref;
+  return darkQuery && darkQuery.matches ? "dark" : "light";
 }
-function applyTheme(t, animate){
-  if (!animate || reduceMotion){ setThemeNow(t); return; }
-  if (document.startViewTransition){ document.startViewTransition(() => setThemeNow(t)); return; }
+function paint(){
+  document.documentElement.setAttribute("data-theme", effectiveTheme());
+  $("theme").textContent = THEME_LABEL[themePref];
+}
+function applyTheme(animate){
+  if (!animate || reduceMotion){ paint(); return; }
+  if (document.startViewTransition){ document.startViewTransition(paint); return; }
   const root = document.documentElement;
   root.classList.add("theme-anim");
-  setThemeNow(t);
+  paint();
   clearTimeout(applyTheme.timer);
   applyTheme.timer = setTimeout(() => root.classList.remove("theme-anim"), 600);
 }
-$("theme").onclick = () => applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark", true);
-let savedTheme = null; try { savedTheme = localStorage.getItem("theme-v1"); } catch (e) {}
-applyTheme(savedTheme === "dark" ? "dark" : "light");
+// Button cycles Auto (device setting) -> Light -> Dark -> Auto
+$("theme").onclick = () => {
+  themePref = themePref === "system" ? "light" : themePref === "light" ? "dark" : "system";
+  try { localStorage.setItem("theme-v1", themePref); } catch (e) {}
+  applyTheme(true);
+};
+// When in Auto, follow the device when it switches between light and dark
+if (darkQuery){
+  const onChange = () => { if (themePref === "system") applyTheme(true); };
+  if (darkQuery.addEventListener) darkQuery.addEventListener("change", onChange);
+  else if (darkQuery.addListener) darkQuery.addListener(onChange);
+}
+applyTheme(false);
 drawTypes();
 drawQ();
 
