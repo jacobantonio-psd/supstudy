@@ -124,6 +124,40 @@ html.theme-anim,html.theme-anim *{transition:background-color .5s ease,color .5s
 
 .brand{display:flex;align-items:center;gap:12px}
 .brand-mark{width:48px;height:48px;flex:0 0 auto}
+/* ---- Gizmo-style study screen ---- */
+.study-top{display:flex;justify-content:space-between;font-weight:700;color:var(--muted);margin-top:8px}
+.bar{height:14px;border:2px solid var(--line);border-radius:999px;background:var(--surface);overflow:hidden;margin:10px 0 14px}
+.bar .fill{height:100%;background:var(--accent);transition:width .45s ease}
+.qcard{background:var(--surface);border:2px solid var(--line);border-radius:22px;box-shadow:5px 5px 0 var(--line);padding:20px;display:grid;gap:14px;margin-top:12px}
+.qcard .qtext{font-size:1.35rem;line-height:1.35;margin:0}
+.opt-letter{display:inline-grid;place-items:center;width:30px;height:30px;border:2px solid var(--line);border-radius:8px;margin-right:12px;font-weight:700;background:var(--pop);color:var(--on);flex:0 0 auto}
+.answers button{display:flex;align-items:center;padding:14px 16px;font-size:1.02rem;border-radius:16px;text-align:left}
+.feedback{font-weight:700;margin:0}
+.feedback.ok,.feedback.no{padding:12px 14px;border:2px solid var(--line);border-radius:14px;animation:gzpop .35s ease}
+.feedback.ok{background:var(--mint);color:var(--on)}
+.feedback.no{background:#FFD6D0;color:var(--on)}
+@keyframes gzpop{from{transform:translateY(6px);opacity:0}to{transform:none;opacity:1}}
+.result{display:grid;justify-items:center;gap:12px;text-align:center;padding:12px 0}
+.ring{width:170px;height:170px;border-radius:50%;background:conic-gradient(var(--accent) calc(var(--p) * 1%), var(--line) 0);display:grid;place-items:center;position:relative;align-content:center}
+.ring::before{content:"";position:absolute;inset:14px;background:var(--surface);border-radius:50%;border:2px solid var(--line)}
+.ring b,.ring span{position:relative;z-index:1;text-align:center}
+.ring b{font-size:2.2rem}
+.ring span{font-size:.9rem;color:var(--muted)}
+.miss{background:var(--surface);border:2px solid var(--line);border-radius:14px;padding:12px;margin-top:8px}
+
+/* ---- keep the date field inside its card ---- */
+form>label,.card>label,.editor>label{min-width:0}
+input[type=date]{width:100%;min-width:0;max-width:100%;box-sizing:border-box;display:block}
+
+/* ---- fix: stop the date field from widening its grid column ---- */
+form{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+form>label{min-width:0;max-width:100%}
+input[type=date]{width:100%;min-width:0;max-width:100%}
+@media (max-width:480px){form{grid-template-columns:minmax(0,1fr)}}
+
+/* ---- fix: iPad date field overflowing its card ---- */
+form>label{display:grid;grid-template-columns:minmax(0,1fr);min-width:0}
+input[type=date]{-webkit-appearance:none;appearance:none;display:block;width:100%;max-width:100%;min-width:0;box-sizing:border-box;overflow:hidden;text-align:left}
 </style>
 </head>
 <body>
@@ -144,9 +178,10 @@ html.theme-anim,html.theme-anim *{transition:background-color .5s ease,color .5s
     <p class="sub">Upload notes or paste text and get a quiz that covers every topic in it. Each quiz is saved to your library automatically.</p>
     <div class="types" id="q-types" role="group" aria-label="Quiz type"></div>
     <div id="q-setup" class="card">
-      <label>Upload a file (.pdf, .txt, .md, .csv, .json, .html)<input id="q-file" type="file" accept=".pdf,application/pdf,.txt,.md,.markdown,.csv,.json,.html,.htm,text/*"></label>
+      <label>Upload files (.pdf, .txt, .md, .csv, .json, .html)<input id="q-file" type="file" multiple accept=".pdf,application/pdf,.txt,.md,.markdown,.csv,.json,.html,.htm,text/*"></label>
       <label>Or paste text<textarea id="q-text" rows="6" placeholder="Paste your notes here"></textarea></label>
       <button id="q-start" type="button">Create quiz</button>
+      <button id="q-clear" class="ghost" type="button">Clear files</button>
       <p id="q-msg" class="note" role="status"></p>
     </div>
   </div>
@@ -374,6 +409,7 @@ async function buildQuestions(sample, text, type, my){
 
 async function startQuiz(){
   const fromRun = curTab === "r" && !!quiz;
+  if (fromRun) exitPractice();
   const fail = m => { if (fromRun){ runErr = m; drawQ(); } else qmsg(m); };
   const text = fromRun ? (quiz.source || "") : $("q-text").value.trim();
   if (text.length < 200){ fail("Add a longer file or paste a few paragraphs first."); return; }
@@ -430,15 +466,28 @@ function drawQ(){
   if (busy && curTab === "r"){ run.append(el("p", "note", progressText || "Writing new questions...")); return; }
   if (!quiz){ run.append(el("p", "note", "No quiz open. Create one, or start one from your library.")); return; }
   run.append(nameBar());
-  if (runErr) run.append(el("div", "fb no", runErr));
+  if (runErr) run.append(el("div", "feedback no", runErr));
   if (!quiz.questions.length){ run.append(el("p", "note", "No questions left in this quiz."), toolsRow(true)); return; }
   if (qi >= quiz.questions.length){ drawResult(run); return; }
-  run.append(toolsRow(false));
+
+  const total = quiz.questions.length;
   const q = quiz.questions[qi], t = quiz.type;
   answered = false;
-  run.append(el("div", "note", "Question " + (qi + 1) + " of " + quiz.questions.length), el("p", "qtext", q.q));
-  const area = el("div", "answers"), fb = el("div", "fb"), why = el("div", "note"), actions = el("div", "row");
-  run.append(area, fb, why, actions);
+
+  const top = el("div", "study-top");
+  top.append(el("span", "", (qi + 1) + " of " + total), el("span", "", "Score " + score));
+  const bar = el("div", "bar"), fill = el("div", "fill");
+  fill.style.width = Math.round((qi / total) * 100) + "%";
+  bar.append(fill);
+  run.append(top, bar);
+  run.append(quiz.practice ? el("div", "note", "Practice round: your library quiz isn't changed.") : toolsRow(false));
+
+  const card = el("div", "qcard");
+  card.append(el("p", "qtext", q.q));
+  const area = el("div", "answers"), fb = el("div", "feedback"), why = el("div", "note"), actions = el("div", "row");
+  card.append(area, fb, why, actions);
+  run.append(card);
+
   const opts = [];
   let input = null, checkBtn = null;
 
@@ -446,25 +495,34 @@ function drawQ(){
     if (answered) return; answered = true;
     const ok = t === "fill_blank" || t === "identification" ? isRight(q, val) : val === q.answer;
     if (ok) score++; else missed.push(q);
-    fb.className = "fb " + (ok ? "ok" : "no");
-    fb.textContent = ok ? "Correct." : "Not quite. Answer: " + ansText(q);
+    fb.className = "feedback " + (ok ? "ok" : "no");
+    fb.textContent = ok ? "Correct!" : "Not quite. The answer is: " + ansText(q);
     if (q.why) why.textContent = q.why;
     opts.forEach(o => { o.b.disabled = true; if (o.v === q.answer) o.b.classList.add("right"); else if (o.v === val) o.b.classList.add("wrong"); });
     if (input){ input.disabled = true; checkBtn.hidden = true; }
+    top.lastChild.textContent = "Score " + score;
     if (!ok && input){
       const c = el("button", "ghost", "Count as correct");
-      c.onclick = () => { score++; missed = missed.filter(x => x !== q); fb.className = "fb ok"; fb.textContent = "Counted as correct."; c.remove(); };
+      c.onclick = () => { score++; missed = missed.filter(x => x !== q); fb.className = "feedback ok"; fb.textContent = "Counted as correct."; top.lastChild.textContent = "Score " + score; c.remove(); };
       actions.append(c);
     }
-    const next = el("button", "", qi + 1 >= quiz.questions.length ? "See results" : "Next question");
+    const next = el("button", "", qi + 1 >= total ? "See results" : "Next");
     next.onclick = () => { qi++; drawQ(); };
     actions.append(next); next.focus();
   }
 
   if (t === "multiple_choice"){
-    q.options.forEach((txt, i) => { const b = el("button", "", txt); b.type = "button"; b.onclick = () => check(i); opts.push({ b, v: i }); area.append(b); });
+    q.options.forEach((txt, i) => {
+      const b = el("button", ""); b.type = "button";
+      b.append(el("span", "opt-letter", String.fromCharCode(65 + i)), document.createTextNode(txt));
+      b.onclick = () => check(i); opts.push({ b, v: i }); area.append(b);
+    });
   } else if (t === "true_false"){
-    [[true, "True"], [false, "False"]].forEach(([v, txt]) => { const b = el("button", "", txt); b.type = "button"; b.onclick = () => check(v); opts.push({ b, v }); area.append(b); });
+    [[true, "True"], [false, "False"]].forEach(([v, txt]) => {
+      const b = el("button", ""); b.type = "button";
+      b.append(el("span", "opt-letter", txt[0]), document.createTextNode(txt));
+      b.onclick = () => check(v); opts.push({ b, v }); area.append(b);
+    });
   } else {
     const row = el("div", "row");
     input = document.createElement("input"); input.placeholder = "Type your answer"; input.setAttribute("aria-label", "Your answer");
@@ -476,6 +534,7 @@ function drawQ(){
 }
 
 function syncLib(){
+  if (!quiz || quiz.practice) return;
   const e = quiz && quiz.savedId ? saved.find(s => s.id === quiz.savedId) : null;
   if (!e) return;
   e.questions = quiz.questions; e.type = quiz.type;
@@ -569,18 +628,43 @@ function editorFor(index){
   qIn.focus();
 }
 
+function exitPractice(){
+  if (quiz && quiz.practice){ quiz.questions = quiz.full || quiz.questions; quiz.full = null; quiz.practice = false; }
+}
+function practiceMissed(){
+  if (!missed.length || !quiz) return;
+  if (!quiz.full) quiz.full = quiz.questions;
+  quiz.practice = true; quiz.questions = missed.slice();
+  qi = 0; score = 0; missed = []; runErr = ""; drawQ();
+}
 function drawResult(run){
-  const n = quiz.questions.length;
-  run.append(el("p", "qtext", "You got " + score + " of " + n + " (" + Math.round(score / n * 100) + "%)."));
+  const n = quiz.questions.length, pct = Math.round(score / n * 100);
+  const wrap = el("div", "result");
+  const ring = el("div", "ring"); ring.style.setProperty("--p", pct);
+  ring.append(el("b", "", pct + "%"), el("span", "", score + " of " + n + " correct"));
+  wrap.append(ring, el("p", "qtext", pct === 100 ? "Perfect score!" : pct >= 70 ? "Nice work. Review the misses below." : "Keep going. Practice the ones you missed."));
+  run.append(wrap);
   if (missed.length){
-    run.append(el("div", "note", "To review:"));
-    for (const q of missed){ const d = el("div"); d.append(el("div", "course", q.q), el("div", "note", "Answer: " + ansText(q))); run.append(d); }
-  } else run.append(el("p", "", "Every question right."));
-  const row = el("div", "row"), again = el("button", "", "Retake"), lib = el("button", "ghost", "Library"), nw = el("button", "ghost", "New quiz");
-  again.onclick = () => { qi = 0; score = 0; missed = []; runErr = ""; drawQ(); };
+    run.append(el("div", "course", "To review"));
+    for (const q of missed){
+      const d = el("div", "miss");
+      d.append(el("div", "course", q.q), el("div", "note", "Answer: " + ansText(q)));
+      run.append(d);
+    }
+  }
+  const row = el("div", "row");
+  const again = el("button", "", "Retake all");
+  again.onclick = () => { exitPractice(); qi = 0; score = 0; missed = []; runErr = ""; drawQ(); };
+  row.append(again);
+  if (missed.length){
+    const pr = el("button", "ghost", "Practice missed (" + missed.length + ")");
+    pr.onclick = practiceMissed; row.append(pr);
+  }
+  const ed = el("button", "ghost", "Edit questions");
+  ed.onclick = () => { exitPractice(); qi = 0; drawQ(); };
+  const lib = el("button", "ghost", "Library"), nw = el("button", "ghost", "New quiz");
   lib.onclick = () => showTab("l"); nw.onclick = () => showTab("q");
-  const ed = el("button", "ghost", "Edit questions"); ed.onclick = () => { qi = 0; drawQ(); };
-  row.append(again, ed, lib, nw); run.append(row);
+  row.append(ed, lib, nw); run.append(row);
 }
 
 function drawSaved(){
@@ -613,20 +697,28 @@ function openSaved(id){
   showTab("r");
 }
 
+let fileParts = [], fileNames = [];
 $("q-file").addEventListener("change", async e => {
-  const f = e.target.files[0]; if (!f) return;
-  if (/\.(docx?|pptx?)$/i.test(f.name)){ qmsg("Word and PowerPoint files aren't supported. Copy the text and paste it below, or save the file as a PDF or .txt."); e.target.value = ""; return; }
-  const isPdf = /\.pdf$/i.test(f.name);
-  if (isPdf) qmsg("Reading PDF...");
+  const files = Array.from(e.target.files || []);
+  e.target.value = "";
+  if (!files.length) return;
+  if (files.some(f => /\.(docx?|pptx?)$/i.test(f.name))){ qmsg("Word and PowerPoint files aren't supported. Save them as PDF or .txt first."); return; }
+  qmsg("Reading " + files.length + " file" + (files.length > 1 ? "s" : "") + "...");
   try {
-    let t = isPdf ? await pdfText(f) : await f.text();
-    if (isPdf && t.trim().length < 200){ qmsg("No readable text found in this PDF. It may be a scan. Copy the text and paste it below."); e.target.value = ""; return; }
-    if (/\.html?$/i.test(f.name)) t = new DOMParser().parseFromString(t, "text/html").body.textContent;
-    $("q-text").value = t;
-    quizName = f.name.replace(/\.[^.]+$/, "");
-    qmsg("Loaded " + f.name + " (" + t.length.toLocaleString() + " characters)." + "");
-  } catch (err){ qmsg(isPdf ? "Couldn't read this PDF here. Copy the text and paste it below." : "Couldn't read that file."); }
+    for (const f of files){
+      const isPdf = /\.pdf$/i.test(f.name);
+      let t = isPdf ? await pdfText(f) : await f.text();
+      if (/\.html?$/i.test(f.name)) t = new DOMParser().parseFromString(t, "text/html").body.textContent;
+      if (isPdf && t.trim().length < 200){ qmsg(f.name + " has no readable text. It may be a scan. Copy its text and paste it below instead."); continue; }
+      fileParts.push("=== " + f.name + " ===\n" + t.trim());
+      fileNames.push(f.name.replace(/\.[^.]+$/, ""));
+    }
+  } catch (err){ qmsg("Couldn't read one of the files here. Try again, or paste the text below."); }
+  $("q-text").value = fileParts.join("\n\n");
+  quizName = fileNames.length > 1 ? fileNames[0] + " + " + (fileNames.length - 1) + " more" : (fileNames[0] || "");
+  if (fileNames.length) qmsg("Loaded " + fileNames.length + " file" + (fileNames.length > 1 ? "s" : "") + ": " + fileNames.join(", ") + ".");
 });
+$("q-clear").onclick = () => { fileParts = []; fileNames = []; $("q-text").value = ""; quizName = ""; qmsg("Cleared."); };
 $("q-text").addEventListener("input", () => { quizName = ""; });
 $("q-start").onclick = startQuiz;
 const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
