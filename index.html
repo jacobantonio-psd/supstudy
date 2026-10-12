@@ -104,6 +104,17 @@ li.done{background:var(--donebg)}
 .editor{display:grid;gap:12px;margin-top:6px}
 .editor textarea,.editor input[type=text]{font:inherit;color:var(--ink);background:var(--surface);border:2px solid var(--line);border-radius:12px;padding:10px;width:100%}
 #theme{white-space:nowrap}
+
+input,textarea,select{background:var(--surface);color:var(--ink)}
+input[type=file]{padding:8px;color:var(--ink)}
+input[type=file]::file-selector-button{font:inherit;font-weight:600;color:var(--on);background:var(--pop);border:2px solid var(--line);border-radius:10px;padding:6px 12px;margin-right:10px;cursor:pointer}
+input[type=date]{color:var(--ink)}
+:root[data-theme="dark"] input,:root[data-theme="dark"] textarea{color-scheme:dark}
+:root[data-theme="light"] input,:root[data-theme="light"] textarea{color-scheme:light}
+/* ---- theme change animation ---- */
+html.theme-anim,html.theme-anim *{transition:background-color .5s ease,color .5s ease,border-color .5s ease,box-shadow .5s ease,fill .5s ease !important}
+@media (prefers-reduced-motion: reduce){html.theme-anim,html.theme-anim *{transition:none !important}}
+::view-transition-old(root),::view-transition-new(root){animation-duration:.5s}
 </style>
 </head>
 <body>
@@ -570,8 +581,9 @@ function drawSaved(){
   for (const s of [...saved].reverse()){
     const row = el("div", "row"), info = el("div"); info.style.flex = "1 1 160px";
     info.append(el("div", "course", s.name), el("div", "note", TYPES[s.type] + ", " + s.questions.length + " questions"));
-    const go = el("button", "", "Start"), del = el("button", "ghost", "Delete");
+    const go = el("button", "", "Open"), ed = el("button", "ghost", "Edit"), del = el("button", "ghost", "Delete");
     go.onclick = () => openSaved(s.id);
+    ed.onclick = () => { openSaved(s.id); editorFor(0); };
     del.onclick = () => {
       if (del.dataset.arm){
         saved = saved.filter(x => x.id !== s.id); persist();
@@ -579,7 +591,7 @@ function drawSaved(){
         drawSaved();
       } else { del.dataset.arm = "1"; del.textContent = "Confirm delete"; }
     };
-    row.append(info, go, del); card.append(row);
+    row.append(info, go, ed, del); card.append(row);
   }
   box.append(card);
 }
@@ -608,12 +620,22 @@ $("q-file").addEventListener("change", async e => {
 });
 $("q-text").addEventListener("input", () => { quizName = ""; });
 $("q-start").onclick = startQuiz;
-function applyTheme(t){
+const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+function setThemeNow(t){
   document.documentElement.setAttribute("data-theme", t);
   $("theme").textContent = t === "dark" ? "Light mode" : "Dark mode";
   try { localStorage.setItem("theme-v1", t); } catch (e) {}
 }
-$("theme").onclick = () => applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark");
+function applyTheme(t, animate){
+  if (!animate || reduceMotion){ setThemeNow(t); return; }
+  if (document.startViewTransition){ document.startViewTransition(() => setThemeNow(t)); return; }
+  const root = document.documentElement;
+  root.classList.add("theme-anim");
+  setThemeNow(t);
+  clearTimeout(applyTheme.timer);
+  applyTheme.timer = setTimeout(() => root.classList.remove("theme-anim"), 600);
+}
+$("theme").onclick = () => applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark", true);
 let savedTheme = null; try { savedTheme = localStorage.getItem("theme-v1"); } catch (e) {}
 applyTheme(savedTheme === "dark" ? "dark" : "light");
 drawTypes();
