@@ -633,7 +633,7 @@ const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-mo
 const darkQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
 const THEME_LABEL = { system: "Auto", light: "Light", dark: "Dark" };
 let themePref = "system";
-try { const s = localStorage.getItem("theme-v1"); if (s === "light" || s === "dark" || s === "system") themePref = s; } catch (e) {}
+try { const s = localStorage.getItem("theme-v2"); if (s === "light" || s === "dark" || s === "system") themePref = s; } catch (e) {}
 function effectiveTheme(){
   if (themePref !== "system") return themePref;
   return darkQuery && darkQuery.matches ? "dark" : "light";
@@ -654,7 +654,7 @@ function applyTheme(animate){
 // Button cycles Auto (device setting) -> Light -> Dark -> Auto
 $("theme").onclick = () => {
   themePref = themePref === "system" ? "light" : themePref === "light" ? "dark" : "system";
-  try { localStorage.setItem("theme-v1", themePref); } catch (e) {}
+  try { localStorage.setItem("theme-v2", themePref); } catch (e) {}
   applyTheme(true);
 };
 // When in Auto, follow the device when it switches between light and dark
