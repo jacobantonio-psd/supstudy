@@ -204,10 +204,43 @@ const sb = supabase.createClient("https://oziwceozhehkuitbuqpu.supabase.co", "sb
 const $ = id => document.getElementById(id);
 const say = t => { $("msg").textContent = t; };
 const redirectTo = window.location.origin + "/login.html";
+const RESEND_KEY = "resend-until-v1";
+const NORMAL_WAIT = 60;      // seconds between resends
+const LIMIT_WAIT = 3600;     // seconds to wait after a rate-limit error
+let cooldownTimer = null;
+
+function fmt(sec){
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return m + ":" + String(s).padStart(2, "0");
+}
+function startCooldown(seconds){
+  const until = Date.now() + seconds * 1000;
+  try { localStorage.setItem(RESEND_KEY, String(until)); } catch (e) {}
+  runCooldown(until);
+}
+function runCooldown(until){
+  const btn = $("resend-btn");
+  clearInterval(cooldownTimer);
+  const tick = () => {
+    const left = Math.ceil((until - Date.now()) / 1000);
+    if (left <= 0){
+      clearInterval(cooldownTimer);
+      btn.disabled = false;
+      btn.textContent = "Resend confirmation email";
+      try { localStorage.removeItem(RESEND_KEY); } catch (e) {}
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "Resend in " + fmt(left);
+  };
+  tick();
+  cooldownTimer = setInterval(tick, 1000);
+}
+function showResend(){ $("resend-row").hidden = false; }
+
 function explain(err){
   const m = (err && err.message) || "Something went wrong.";
-  if (/rate limit|too many|over_email_send_rate_limit/i.test(m) || err.status === 429)
-    return "Too many confirmation emails were sent recently. Wait about an hour, then press Resend. If it keeps failing, the email limit on the project needs changing.";
+  if (/rate limit|too many|over_email_send_rate_limit/i.test(m) || (err && err.status === 429)) return "RATE";
   return m;
 }
 async function createAccount(){
@@ -217,21 +250,39 @@ async function createAccount(){
   if (password !== again){ say("The passwords don't match."); return; }
   say("Creating your account...");
   const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: redirectTo } });
-  if (error){ say(explain(error)); return; }
+  if (error){
+    const e = explain(error);
+    if (e === "RATE"){ showResend(); startCooldown(LIMIT_WAIT); say("Too many emails were sent recently. You can resend once the timer ends."); }
+    else say(e);
+    return;
+  }
   if (data.session){ window.location.replace("index.html"); return; }
-  $("resend-row").hidden = false;
-  say("We sent a confirmation email to " + email + ". Open it and tap the link. Didn't get it? Check spam, or press Resend.");
+  showResend();
+  startCooldown(NORMAL_WAIT);
+  say("We sent a confirmation email to " + email + ". Open it and tap the link. Check spam if you don't see it.");
 }
 async function resend(){
   const email = $("email").value.trim();
   if (!email){ say("Enter the email you signed up with."); return; }
   say("Sending...");
   const { error } = await sb.auth.resend({ type: "signup", email, options: { emailRedirectTo: redirectTo } });
-  if (error){ say(explain(error)); return; }
+  if (error){
+    const e = explain(error);
+    if (e === "RATE"){ startCooldown(LIMIT_WAIT); say("Too many emails were sent recently. Try again when the timer ends."); }
+    else say(e);
+    return;
+  }
+  startCooldown(NORMAL_WAIT);
   say("Sent again. Check your inbox and spam folder.");
 }
 $("signup-btn").onclick = createAccount;
 $("resend-btn").onclick = resend;
+
+// Keep the countdown if the page is reloaded
+try {
+  const until = Number(localStorage.getItem(RESEND_KEY) || 0);
+  if (until > Date.now()){ showResend(); runCooldown(until); }
+} catch (e) {}
 </script>
 </body>
 </html>
