@@ -210,19 +210,27 @@ html.nav-hidden main{padding-bottom:70px}
   #nav-show{bottom:auto;top:16px;left:16px;transform:none}
   html.nav-hidden main{margin:0 auto;max-width:720px}
 }
+
+/* ---- search bar: magnifier and its own colour ---- */
+:root:root{--search-bg:#E6EEFF}
+:root[data-theme="dark"]:root{--search-bg:#2B3C68}
+.search-wrap{position:relative;order:-1;flex:1 1 100%;width:100%}
+.search-ico{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--ink);opacity:.8;pointer-events:none}
+#nav-search{width:100%;background:var(--search-bg);padding-left:38px}
+@media (min-width:900px){.search-wrap{order:0;flex:0 0 auto}}
 </style>
 </head>
 <body>
 <button id="nav-show" type="button" aria-expanded="false" aria-controls="nav-panel">Menu</button>
 <div id="gate" class="card gate"><p id="gate-msg" class="note">Checking sign-in...</p></div>
 <main id="app" hidden>
-  <div class="top"><h1>SupStudy</h1><select id="mode" aria-label="Study mode"><option value="general">General</option><option value="accountancy">Accountancy</option><option value="engineering">Engineering</option></select><button id="theme" class="ghost" type="button">Dark mode</button></div>
+  <div class="top"><h1>SupStudy</h1><select id="mode" aria-label="Study mode"><option value="general">General</option></select><button id="theme" class="ghost" type="button">Dark mode</button></div>
   <div id="name-prompt" class="card" hidden style="margin-bottom:14px"><div class="course" style="text-align:center">What should we call you?</div><div class="row" style="justify-content:center"><input id="name-input" type="text" maxlength="30" placeholder="Your name" style="max-width:260px"></div><div class="row" style="justify-content:center"><button id="name-save" type="button">Save</button></div></div>
   <p id="greeting" style="font-size:1.1rem;font-weight:600;margin:4px 0 14px;color:var(--ink)"></p>
   <p id="sync-msg" class="note" role="status"></p>
   <nav class="tabs">
     <button id="nav-hide" class="ghost" type="button" aria-expanded="true" aria-controls="nav-panel">Hide menu</button>
-    <input id="nav-search" type="search" placeholder="Search quizzes" aria-label="Search quizzes"><button type="button" id="t-a" aria-pressed="true">Assignments</button><button type="button" id="t-q" aria-pressed="false">New quiz</button><button type="button" id="t-l" aria-pressed="false">Library</button><button type="button" id="t-r" aria-pressed="false" hidden>Quiz</button>
+    <div class="search-wrap"><svg class="search-ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input id="nav-search" type="search" placeholder="Search quizzes" aria-label="Search quizzes"></div><button type="button" id="t-a" aria-pressed="true">Assignments</button><button type="button" id="t-q" aria-pressed="false">New quiz</button><button type="button" id="t-l" aria-pressed="false">Library</button><button type="button" id="t-r" aria-pressed="false" hidden>Quiz</button>
     <div class="navrow"><button type="button" id="t-p" aria-pressed="false"><span class="avatar"><img id="nav-avatar" alt="" hidden></span><span>Profile</span></button>
       <button id="signout" class="icon-btn" type="button" hidden aria-label="Sign out" title="Sign out"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#E0444E" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 3v8"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/></svg></button></div></nav>
   <div id="tab-a">
@@ -238,6 +246,7 @@ html.nav-hidden main{padding-bottom:70px}
   <div id="tab-q" hidden>
     <p class="sub">Upload notes or paste text and get a quiz that covers every topic in it. Each quiz is saved to your library automatically.</p>
     <div class="types" id="q-types" role="group" aria-label="Quiz type"></div>
+    <div class="types" id="mixed-pick" role="group" aria-label="Kinds to mix" hidden></div>
     <div id="q-setup" class="card">
       <label>Upload files (.pdf, .txt, .md, .csv, .json, .html)<input id="q-file" type="file" multiple accept=".pdf,application/pdf,.txt,.md,.markdown,.csv,.json,.html,.htm,text/*"></label>
       <label>Or paste text<textarea id="q-text" rows="6" placeholder="Paste your notes here"></textarea></label>
@@ -365,7 +374,25 @@ function uniqueName(base, type){
   return n;
 }
 
+let mixedKinds = ["multiple_choice", "true_false", "identification", "fill_blank"];
+const KIND_LABEL = { multiple_choice: "Multiple choice", true_false: "True or false", identification: "Identification", fill_blank: "Fill in the blank" };
+function drawMixedPick(){
+  const box = $("mixed-pick");
+  box.hidden = qType !== "mixed";
+  if (box.hidden) return;
+  box.replaceChildren();
+  for (const [k, v] of Object.entries(KIND_LABEL)){
+    const b = el("button", "", v); b.type = "button"; b.setAttribute("aria-pressed", String(mixedKinds.includes(k)));
+    b.onclick = () => {
+      if (mixedKinds.includes(k)){ if (mixedKinds.length === 1) return; mixedKinds = mixedKinds.filter(x => x !== k); }
+      else mixedKinds = [...mixedKinds, k];
+      drawMixedPick();
+    };
+    box.append(b);
+  }
+}
 function drawTypes(){
+  drawMixedPick();
   for (const id of ["q-types", "q-types-run"]){
     const box = $(id); box.replaceChildren();
     for (const [k, v] of Object.entries(visibleTypes())){
@@ -400,6 +427,7 @@ function normalizeQ(q, type){
   if (!q || typeof q !== "object") return null;
   const kind = type === "mixed" ? q.kind : type;
   if (!["multiple_choice", "true_false", "identification", "fill_blank", "solving"].includes(kind)) return null;
+  if (type === "mixed" && !mixedKinds.includes(kind)) return null;
   const out = Object.assign({}, q, { kind });
   return valid(out, kind) ? out : null;
 }
@@ -476,7 +504,7 @@ function chunkText(text){
 function setProgress(t){ progressText = t; if (curTab === "r") drawQ(); else qmsg(t); }
 
 async function askPart(sample, part, type, n, total){
-  const prompt = "You write study quizzes. Below is part " + n + " of " + total + " of a study file. Find every distinct topic, term, fact, process and example in this part, and write at least one question for each one, with extra questions for topics that have several important details. Use only facts stated in this part. " + modeHint() + " Question type: " + TYPES[type] + ". Return ONLY JSON, no markdown: {\"topics\":[\"...\"],\"questions\":[ " + SHAPES[type] + ", ... ]}\n\nPART " + n + ":\n" + part;
+  const prompt = "You write study quizzes. Below is part " + n + " of " + total + " of a study file. Find every distinct topic, term, fact, process and example in this part, and write at least one question for each one, with extra questions for topics that have several important details. Use only facts stated in this part. " + modeHint() + " Question type: " + TYPES[type] + (type === "mixed" ? " (use only these kinds: " + mixedKinds.map(k => KIND_LABEL[k]).join(", ") + ")" : "") + ". Return ONLY JSON, no markdown: {\"topics\":[\"...\"],\"questions\":[ " + SHAPES[type] + ", ... ]}\n\nPART " + n + ":\n" + part;
   for (let attempt = 0; ; attempt++){
     try {
       const data = await sample.json(prompt, { modelTier: "default", cache: false });
@@ -811,7 +839,7 @@ let libMode = "general";
 function drawSaved(){
   const box = $("q-saved"); box.replaceChildren();
   const chips = el("div", "types"); chips.setAttribute("role", "group"); chips.setAttribute("aria-label", "Library section");
-  for (const [k, v] of Object.entries(MODE_LABEL)){
+  for (const [k, v] of Object.entries(MODE_LABEL).filter(([k]) => k === "general" || SUBJECT_MODES_ON)){
     const count = saved.filter(s => (s.mode || "general") === k).length;
     const b = el("button", "", v + " (" + count + ")"); b.type = "button"; b.setAttribute("aria-pressed", k === libMode);
     b.onclick = () => { libMode = k; drawSaved(); };
@@ -923,9 +951,10 @@ if (darkQuery){
   else if (darkQuery.addListener) darkQuery.addListener(onChange);
 }
 applyTheme(false);
+const SUBJECT_MODES_ON = false; // set to true to bring back Accountancy and Engineering
 const MODE_LABEL = { general: "General", accountancy: "Accountancy", engineering: "Engineering" };
 let studyMode = "general";
-try { const m = localStorage.getItem("mode-v1"); if (m && MODE_LABEL[m]) studyMode = m; } catch (e) {}
+try { const m = localStorage.getItem("mode-v1"); if (m && MODE_LABEL[m] && (m === "general" || SUBJECT_MODES_ON)) studyMode = m; } catch (e) {}
 function modeHint(){
   if (studyMode === "accountancy") return "Subject: accountancy. Every question is a solving problem: give a scenario with figures taken from the material (transactions, balances, or statement amounts) and ask for one computed result, such as an amount, a ratio, or a journal entry amount. Use the material's formulas and standards. The answer is a number with its unit, or an exact term. The explanation shows the solution steps with the numbers.";
   if (studyMode === "engineering") return "Subject: engineering. Every question is a solving problem: give a scenario with values taken from the material and ask for one computed quantity, using only the formulas and methods in the material. The answer is a number with its unit. The explanation shows the solution steps with the numbers.";
