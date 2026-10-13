@@ -344,8 +344,9 @@ function showTab(n){
 }
 for (const k of ["a","q","l","r","p"]) $("t-" + k).onclick = () => showTab(k);
 
-const TYPES = { identification: "Identification", multiple_choice: "Multiple choice", true_false: "True or false", fill_blank: "Fill in the blank", solving: "Solving" };
+const TYPES = { identification: "Identification", multiple_choice: "Multiple choice", true_false: "True or false", fill_blank: "Fill in the blank", solving: "Solving", mixed: "Mixed" };
 const SHAPES = {
+  mixed: '{"kind":"multiple_choice, true_false, identification or fill_blank","q":"a question","options":["A","B","C","D"] (multiple_choice only),"answer":0 (multiple_choice: index of the correct option; true_false: true or false; other kinds: the answer text),"alt":["other accepted answers"] (text kinds only),"why":"one sentence"}. Mixed means each question picks one of the four kinds, with roughly equal numbers of each kind.',
   solving: '{"q":"a scenario using figures from the material, asking for one computed result","answer":"the final number with its unit, or the exact term","alt":["equivalent forms of the answer"],"why":"the solution steps with the numbers"}',
   identification:'{"q":"a clue or definition","answer":"the term","alt":["other accepted answers"],"why":"one sentence"}',
   multiple_choice:'{"q":"question","options":["A","B","C","D"],"answer":0,"why":"one sentence"} (answer is the 0-based index of the correct option)',
@@ -395,9 +396,17 @@ function valid(q, t){
   if (t === "true_false") return typeof q.answer === "boolean";
   return typeof q.answer === "string" && q.answer.trim() !== "";
 }
+function normalizeQ(q, type){
+  if (!q || typeof q !== "object") return null;
+  const kind = type === "mixed" ? q.kind : type;
+  if (!["multiple_choice", "true_false", "identification", "fill_blank", "solving"].includes(kind)) return null;
+  const out = Object.assign({}, q, { kind });
+  return valid(out, kind) ? out : null;
+}
 function ansText(q){
-  if (quiz.type === "multiple_choice") return q.options[q.answer];
-  if (quiz.type === "true_false") return q.answer ? "True" : "False";
+  const t = q.kind || quiz.type;
+  if (t === "multiple_choice") return q.options[q.answer];
+  if (t === "true_false") return q.answer ? "True" : "False";
   return q.answer;
 }
 
@@ -471,7 +480,7 @@ async function askPart(sample, part, type, n, total){
   for (let attempt = 0; ; attempt++){
     try {
       const data = await sample.json(prompt, { modelTier: "default", cache: false });
-      const qs = (data.questions || []).filter(q => valid(q, type));
+      const qs = (data.questions || []).map(q => normalizeQ(q, type)).filter(Boolean);
       if (!qs.length) throw new Error("empty");
       return qs;
     } catch (e){
@@ -566,7 +575,7 @@ function drawQ(){
   if (qi >= quiz.questions.length){ drawResult(run); return; }
 
   const total = quiz.questions.length;
-  const q = quiz.questions[qi], t = quiz.type;
+  const q = quiz.questions[qi], t = q.kind || quiz.type;
   answered = false;
 
   const top = el("div", "study-top");
@@ -662,13 +671,21 @@ function blankQ(t){
 let editReturn = null;
 function finishEdit(){ const f = editReturn || drawQ; editReturn = null; f(); }
 function labelled(text, control){ const l = el("label", "", text); l.append(control); return l; }
-function editorFor(index){
+function editorFor(index, kindOverride){
   const isNew = index >= quiz.questions.length;
-  const q0 = isNew ? blankQ(quiz.type) : quiz.questions[index];
-  const t = quiz.type;
+  const t = kindOverride || (isNew ? (quiz.type === "mixed" ? "multiple_choice" : quiz.type) : (quiz.questions[index].kind || quiz.type));
+  const q0 = isNew ? blankQ(t) : quiz.questions[index];
   const run = $("q-body"); run.replaceChildren();
   const form = el("div", "editor");
   form.append(el("div", "course", isNew ? "New question" : "Edit question " + (index + 1)));
+  if (quiz.type === "mixed"){
+    const sel = document.createElement("select"); sel.setAttribute("aria-label", "Question type");
+    [["multiple_choice", "Multiple choice"], ["true_false", "True or false"], ["identification", "Identification"], ["fill_blank", "Fill in the blank"]].forEach(([v, l]) => {
+      const o = document.createElement("option"); o.value = v; o.textContent = l; o.selected = v === t; sel.append(o);
+    });
+    sel.onchange = () => editorFor(index, sel.value);
+    form.append(labelled("Question type", sel));
+  }
   const qIn = document.createElement("textarea"); qIn.rows = 3; qIn.value = q0.q || "";
   form.append(labelled("Question", qIn));
   let getAnswer;
@@ -713,7 +730,7 @@ function editorFor(index){
     const base = getAnswer();
     if (typeof base === "string"){ msg.textContent = base; return; }
     if (!base.q){ msg.textContent = "The question can't be empty."; return; }
-    const q = Object.assign({}, base, { why: whyIn.value.trim() });
+    const q = Object.assign({}, base, { why: whyIn.value.trim(), kind: t });
     if (!valid(q, t)){ msg.textContent = "Fill in the answer."; return; }
     if (isNew) quiz.questions.push(q); else quiz.questions[index] = q;
     qi = isNew ? quiz.questions.length - 1 : index;
