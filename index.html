@@ -158,11 +158,26 @@ input[type=date]{width:100%;min-width:0;max-width:100%}
 /* ---- fix: iPad date field overflowing its card ---- */
 form>label{display:grid;grid-template-columns:minmax(0,1fr);min-width:0}
 input[type=date]{-webkit-appearance:none;appearance:none;display:block;width:100%;max-width:100%;min-width:0;box-sizing:border-box;overflow:hidden;text-align:left}
+
+/* ---- Modes ---- */
+:root[data-mode="accountancy"]:root{--accent:#2E9C86;--pop:#BFE8D6}
+:root[data-mode="engineering"]:root{--accent:#F28C28;--pop:#FFD9A8}
+select{font:inherit;color:var(--ink);background:var(--surface);border:2px solid var(--line);border-radius:12px;padding:8px 10px;width:auto;min-width:0}
+/* ---- Navigation: bottom bar on phones, side rail on wide screens ---- */
+main{padding-bottom:120px}
+.tabs{position:fixed;left:0;right:0;bottom:0;top:auto;z-index:50;display:flex;justify-content:space-around;align-items:stretch;gap:6px;margin:0;padding:8px 10px calc(8px + env(safe-area-inset-bottom,0px));background:var(--surface);border:none;border-top:2px solid var(--line)}
+.tabs button{flex:1 1 0;margin:0;border:2px solid var(--line);border-radius:14px;box-shadow:none;padding:10px 6px;font-size:.95rem;background:var(--sky);color:var(--ink)}
+.tabs button[aria-pressed="true"]{background:var(--pop)}
+@media (min-width:900px){
+  .tabs{top:0;bottom:0;right:auto;width:230px;flex-direction:column;justify-content:flex-start;align-items:stretch;gap:10px;padding:28px 16px;border-top:none;border-right:2px solid var(--line)}
+  .tabs button{flex:0 0 auto;text-align:left;padding:12px 14px;font-size:1rem}
+  main{margin:0 24px 0 254px;max-width:720px;padding:36px 28px 56px;padding-bottom:56px}
+}
 </style>
 </head>
 <body>
 <main>
-  <div class="top"><h1>SupStudy</h1><button id="theme" class="ghost" type="button">Dark mode</button></div>
+  <div class="top"><h1>SupStudy</h1><select id="mode" aria-label="Study mode"><option value="general">General</option><option value="accountancy">Accountancy</option><option value="engineering">Engineering</option></select><button id="theme" class="ghost" type="button">Dark mode</button></div>
   <nav class="tabs"><button type="button" id="t-a" aria-pressed="true">Assignments</button><button type="button" id="t-q" aria-pressed="false">New quiz</button><button type="button" id="t-l" aria-pressed="false">Library</button><button type="button" id="t-r" aria-pressed="false" hidden>Quiz</button></nav>
   <div id="tab-a">
   <p class="sub">Sorted by deadline. Saved in this browser.</p>
@@ -262,8 +277,9 @@ function showTab(n){
 }
 for (const k of ["a","q","l","r"]) $("t-" + k).onclick = () => showTab(k);
 
-const TYPES = { identification:"Identification", multiple_choice:"Multiple choice", true_false:"True or false", fill_blank:"Fill in the blank" };
+const TYPES = { identification: "Identification", multiple_choice: "Multiple choice", true_false: "True or false", fill_blank: "Fill in the blank", solving: "Solving" };
 const SHAPES = {
+  solving: '{"q":"a scenario using figures from the material, asking for one computed result","answer":"the final number with its unit, or the exact term","alt":["equivalent forms of the answer"],"why":"the solution steps with the numbers"}',
   identification:'{"q":"a clue or definition","answer":"the term","alt":["other accepted answers"],"why":"one sentence"}',
   multiple_choice:'{"q":"question","options":["A","B","C","D"],"answer":0,"why":"one sentence"} (answer is the 0-based index of the correct option)',
   true_false:'{"q":"a statement","answer":true,"why":"one sentence"} (answer is true or false)',
@@ -284,7 +300,7 @@ function uniqueName(base, type){
 function drawTypes(){
   for (const id of ["q-types", "q-types-run"]){
     const box = $(id); box.replaceChildren();
-    for (const [k, v] of Object.entries(TYPES)){
+    for (const [k, v] of Object.entries(visibleTypes())){
       const b = el("button", "", v); b.type = "button"; b.setAttribute("aria-pressed", k === qType);
       b.onclick = () => { if (k === qType) return; qType = k; drawTypes(); if (curTab === "r" && quiz) startQuiz(); };
       box.append(b);
@@ -293,7 +309,19 @@ function drawTypes(){
 }
 
 function norm(s){ return String(s).toLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}\s]/gu, "").replace(/\b(the|a|an)\b/g, "").replace(/\s+/g, " ").trim(); }
-function isRight(q, val){ const v = norm(val); return v !== "" && [q.answer, ...(q.alt || [])].some(a => norm(a) === v); }
+function numOf(s){
+  const m = String(s).replace(/,/g, "").replace(/[₱$€£]/g, "").trim().match(/^(-?\d+(\.\d+)?)\s*[a-zA-Z%\/.² ]*$/);
+  return m ? parseFloat(m[1]) : null;
+}
+function isRight(q, val){
+  const v = norm(val);
+  if (v === "") return false;
+  const cands = [q.answer, ...(q.alt || [])];
+  if (cands.some(a => norm(a) === v)) return true;
+  const got = numOf(val);
+  if (got === null) return false;
+  return cands.some(a => { const e = numOf(a); return e !== null && Math.abs(got - e) <= Math.max(0.01, Math.abs(e) * 0.005); });
+}
 function valid(q, t){
   if (!q || typeof q.q !== "string") return false;
   if (t === "multiple_choice") return Array.isArray(q.options) && q.options.length >= 2 && Number.isInteger(q.answer) && q.answer >= 0 && q.answer < q.options.length;
@@ -372,7 +400,7 @@ function chunkText(text){
 function setProgress(t){ progressText = t; if (curTab === "r") drawQ(); else qmsg(t); }
 
 async function askPart(sample, part, type, n, total){
-  const prompt = "You write study quizzes. Below is part " + n + " of " + total + " of a study file. Find every distinct topic, term, fact, process and example in this part, and write at least one question for each one, with extra questions for topics that have several important details. Use only facts stated in this part. Question type: " + TYPES[type] + ". Return ONLY JSON, no markdown: {\"topics\":[\"...\"],\"questions\":[ " + SHAPES[type] + ", ... ]}\n\nPART " + n + ":\n" + part;
+  const prompt = "You write study quizzes. Below is part " + n + " of " + total + " of a study file. Find every distinct topic, term, fact, process and example in this part, and write at least one question for each one, with extra questions for topics that have several important details. Use only facts stated in this part. " + modeHint() + " Question type: " + TYPES[type] + ". Return ONLY JSON, no markdown: {\"topics\":[\"...\"],\"questions\":[ " + SHAPES[type] + ", ... ]}\n\nPART " + n + ":\n" + part;
   for (let attempt = 0; ; attempt++){
     try {
       const data = await sample.json(prompt, { modelTier: "default", cache: false });
@@ -429,7 +457,7 @@ async function startQuiz(){
       quiz.type = type; quiz.questions = qs;
       if (entry){ entry.type = type; entry.questions = qs; }
     } else {
-      const ne = { id: Date.now(), name: uniqueName(base, type), type, questions: qs, source: text };
+      const ne = { id: Date.now(), name: uniqueName(base, type), type, questions: qs, source: text, mode: studyMode };
       saved.push(ne);
       quiz = { type, questions: qs, source: text, name: ne.name, savedId: ne.id };
     }
@@ -493,7 +521,7 @@ function drawQ(){
 
   function check(val){
     if (answered) return; answered = true;
-    const ok = t === "fill_blank" || t === "identification" ? isRight(q, val) : val === q.answer;
+    const ok = t === "fill_blank" || t === "identification" || t === "solving" ? isRight(q, val) : val === q.answer;
     if (ok) score++; else missed.push(q);
     fb.className = "feedback " + (ok ? "ok" : "no");
     fb.textContent = ok ? "Correct!" : "Not quite. The answer is: " + ansText(q);
@@ -552,7 +580,8 @@ function toolsRow(empty){
         syncLib(); drawQ();
       } else { del.dataset.arm = "1"; del.textContent = "Confirm delete"; }
     };
-    row.append(ed, del);
+    const all = el("button", "ghost", "All questions"); all.onclick = () => drawQuestionList();
+    row.append(ed, del, all);
   }
   const add = el("button", "ghost", "Add question"); add.onclick = () => editorFor(quiz.questions.length);
   row.append(add);
@@ -563,6 +592,8 @@ function blankQ(t){
   if (t === "true_false") return { q: "", answer: true, why: "" };
   return { q: "", answer: "", alt: [], why: "" };
 }
+let editReturn = null;
+function finishEdit(){ const f = editReturn || drawQ; editReturn = null; f(); }
 function labelled(text, control){ const l = el("label", "", text); l.append(control); return l; }
 function editorFor(index){
   const isNew = index >= quiz.questions.length;
@@ -603,7 +634,7 @@ function editorFor(index){
   } else {
     const aIn = document.createElement("input"); aIn.type = "text"; aIn.value = q0.answer || "";
     const altIn = document.createElement("input"); altIn.type = "text"; altIn.value = (q0.alt || []).join(", ");
-    form.append(labelled(t === "fill_blank" ? "Missing word or phrase" : "Correct term", aIn));
+    form.append(labelled(t === "fill_blank" ? "Missing word or phrase" : t === "solving" ? "Final answer (number with unit)" : "Correct term", aIn));
     form.append(labelled("Other accepted answers (comma separated, optional)", altIn));
     getAnswer = () => ({ q: qIn.value.trim(), answer: aIn.value.trim(), alt: altIn.value.split(",").map(s => s.trim()).filter(Boolean) });
   }
@@ -619,15 +650,40 @@ function editorFor(index){
     if (!valid(q, t)){ msg.textContent = "Fill in the answer."; return; }
     if (isNew) quiz.questions.push(q); else quiz.questions[index] = q;
     qi = isNew ? quiz.questions.length - 1 : index;
-    syncLib(); drawQ();
+    syncLib(); finishEdit();
   };
-  cancel.onclick = () => drawQ();
+  cancel.onclick = () => finishEdit();
   const btns = el("div", "row"); btns.append(save, cancel);
   form.append(msg, btns);
   run.append(form);
   qIn.focus();
 }
 
+function drawQuestionList(){
+  const run = $("q-body"); run.replaceChildren();
+  $("t-r").hidden = !quiz;
+  if (!quiz){ run.append(el("p", "note", "No quiz open.")); return; }
+  run.append(nameBar());
+  run.append(el("div", "course", "All questions (" + quiz.questions.length + ")"));
+  quiz.questions.forEach((q, i) => {
+    const card = el("div", "miss"), r = el("div", "row"), info = el("div");
+    info.style.flex = "1 1 180px";
+    info.append(el("div", "course", (i + 1) + ". " + q.q), el("div", "note", "Answer: " + ansText(q)));
+    const ed = el("button", "ghost", "Edit"), del = el("button", "ghost", "Delete");
+    ed.onclick = () => { editReturn = drawQuestionList; editorFor(i); };
+    del.onclick = () => {
+      if (del.dataset.arm){ quiz.questions.splice(i, 1); syncLib(); drawQuestionList(); }
+      else { del.dataset.arm = "1"; del.textContent = "Confirm"; }
+    };
+    r.append(info, ed, del); card.append(r); run.append(card);
+  });
+  const add = el("button", "ghost", "Add question");
+  add.onclick = () => { editReturn = drawQuestionList; editorFor(quiz.questions.length); };
+  const back = el("button", "", "Back to quiz");
+  back.onclick = () => { qi = 0; drawQ(); };
+  run.append(el("div", "row"));
+  run.lastChild.append(add, back);
+}
 function exitPractice(){
   if (quiz && quiz.practice){ quiz.questions = quiz.full || quiz.questions; quiz.full = null; quiz.practice = false; }
 }
@@ -667,16 +723,29 @@ function drawResult(run){
   row.append(ed, lib, nw); run.append(row);
 }
 
+let libMode = "general";
 function drawSaved(){
   const box = $("q-saved"); box.replaceChildren();
-  if (!saved.length){ box.append(el("p", "empty", "No quizzes yet. Create one in the New quiz tab and it will show up here.")); return; }
+  const chips = el("div", "types"); chips.setAttribute("role", "group"); chips.setAttribute("aria-label", "Library section");
+  for (const [k, v] of Object.entries(MODE_LABEL)){
+    const count = saved.filter(s => (s.mode || "general") === k).length;
+    const b = el("button", "", v + " (" + count + ")"); b.type = "button"; b.setAttribute("aria-pressed", k === libMode);
+    b.onclick = () => { libMode = k; drawSaved(); };
+    chips.append(b);
+  }
+  box.append(chips);
+  const list = saved.filter(s => (s.mode || "general") === libMode);
+  if (!list.length){
+    box.append(el("p", "empty", "No " + MODE_LABEL[libMode].toLowerCase() + " quizzes yet. Create one in the New quiz tab while this mode is selected."));
+    return;
+  }
   const card = el("div", "card");
-  for (const s of [...saved].reverse()){
+  for (const s of [...list].reverse()){
     const row = el("div", "row"), info = el("div"); info.style.flex = "1 1 160px";
     info.append(el("div", "course", s.name), el("div", "note", TYPES[s.type] + ", " + s.questions.length + " questions"));
     const go = el("button", "", "Open"), ed = el("button", "ghost", "Edit"), del = el("button", "ghost", "Delete");
     go.onclick = () => openSaved(s.id);
-    ed.onclick = () => { openSaved(s.id); editorFor(0); };
+    ed.onclick = () => { openSaved(s.id); drawQuestionList(); };
     del.onclick = () => {
       if (del.dataset.arm){
         saved = saved.filter(x => x.id !== s.id); persist();
@@ -688,7 +757,6 @@ function drawSaved(){
   }
   box.append(card);
 }
-
 function openSaved(id){
   const s = saved.find(x => x.id === id); if (!s) return;
   qType = s.type; drawTypes();
@@ -756,6 +824,33 @@ if (darkQuery){
   else if (darkQuery.addListener) darkQuery.addListener(onChange);
 }
 applyTheme(false);
+const MODE_LABEL = { general: "General", accountancy: "Accountancy", engineering: "Engineering" };
+let studyMode = "general";
+try { const m = localStorage.getItem("mode-v1"); if (m && MODE_LABEL[m]) studyMode = m; } catch (e) {}
+function modeHint(){
+  if (studyMode === "accountancy") return "Subject: accountancy. Every question is a solving problem: give a scenario with figures taken from the material (transactions, balances, or statement amounts) and ask for one computed result, such as an amount, a ratio, or a journal entry amount. Use the material's formulas and standards. The answer is a number with its unit, or an exact term. The explanation shows the solution steps with the numbers.";
+  if (studyMode === "engineering") return "Subject: engineering. Every question is a solving problem: give a scenario with values taken from the material and ask for one computed quantity, using only the formulas and methods in the material. The answer is a number with its unit. The explanation shows the solution steps with the numbers.";
+  return "";
+}
+function visibleTypes(){
+  if (studyMode === "accountancy" || studyMode === "engineering") return { solving: TYPES.solving };
+  const { solving, ...rest } = TYPES;
+  return rest;
+}
+function applyMode(){
+  libMode = studyMode;
+  document.documentElement.setAttribute("data-mode", studyMode);
+  $("mode").value = studyMode;
+  if (studyMode === "accountancy" || studyMode === "engineering") qType = "solving";
+  else if (qType === "solving") qType = "multiple_choice";
+  drawTypes();
+}
+$("mode").onchange = () => {
+  studyMode = $("mode").value;
+  try { localStorage.setItem("mode-v1", studyMode); } catch (e) {}
+  applyMode();
+};
+applyMode();
 drawTypes();
 drawQ();
 
