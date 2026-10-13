@@ -176,17 +176,25 @@ main{padding-bottom:120px}
 
 
 .gate{max-width:520px;margin:60px auto;padding:20px}
+
+/* ---- navbar search, profile, and sign out ---- */
+.tabs{flex-wrap:wrap}
+#nav-search{flex:1 1 100%;order:-1;min-width:0;width:100%;font:inherit;color:var(--ink);background:var(--surface);border:2px solid var(--line);border-radius:12px;padding:8px 10px}
+main{padding-bottom:170px}
+@media (min-width:900px){#nav-search{order:0}main{padding-bottom:56px}}
 </style>
 </head>
 <body>
 <div id="gate" class="card gate"><p id="gate-msg" class="note">Checking sign-in...</p></div>
 <main id="app" hidden>
-  <div class="top"><h1>SupStudy</h1><select id="mode" aria-label="Study mode"><option value="general">General</option><option value="accountancy">Accountancy</option><option value="engineering">Engineering</option></select><button id="signout" class="ghost" type="button" hidden>Sign out</button>
-<button id="theme" class="ghost" type="button">Dark mode</button></div>
+  <div class="top"><h1>SupStudy</h1><select id="mode" aria-label="Study mode"><option value="general">General</option><option value="accountancy">Accountancy</option><option value="engineering">Engineering</option></select><button id="theme" class="ghost" type="button">Dark mode</button></div>
   <div id="name-prompt" class="card" hidden style="margin-bottom:14px"><div class="course" style="text-align:center">What should we call you?</div><div class="row" style="justify-content:center"><input id="name-input" type="text" maxlength="30" placeholder="Your name" style="max-width:260px"></div><div class="row" style="justify-content:center"><button id="name-save" type="button">Save</button></div></div>
   <p id="greeting" style="font-size:1.1rem;font-weight:600;margin:4px 0 14px;color:var(--ink)"></p>
   <p id="sync-msg" class="note" role="status"></p>
-  <nav class="tabs"><button type="button" id="t-a" aria-pressed="true">Assignments</button><button type="button" id="t-q" aria-pressed="false">New quiz</button><button type="button" id="t-l" aria-pressed="false">Library</button><button type="button" id="t-r" aria-pressed="false" hidden>Quiz</button></nav>
+  <nav class="tabs">
+    <input id="nav-search" type="search" placeholder="Search quizzes" aria-label="Search quizzes"><button type="button" id="t-a" aria-pressed="true">Assignments</button><button type="button" id="t-q" aria-pressed="false">New quiz</button><button type="button" id="t-l" aria-pressed="false">Library</button><button type="button" id="t-r" aria-pressed="false" hidden>Quiz</button>
+    <button type="button" id="t-p" aria-pressed="false">Profile</button>
+    <button id="signout" class="ghost" type="button" hidden>Sign out</button></nav>
   <div id="tab-a">
   <p class="sub">Sorted by deadline. Saved in this browser.</p>
   <form id="f">
@@ -195,7 +203,6 @@ main{padding-bottom:120px}
     <label class="wide">Assignment (optional)<input id="title" maxlength="100" placeholder="Lab report 2"></label>
     <button type="submit">Add assignment</button>
   </form>
-  <input id="task-search" type="search" placeholder="Search assignments by course or title" aria-label="Search assignments" style="margin:6px 0 4px">
   <ul id="list"></ul>
   </div>
   <div id="tab-q" hidden>
@@ -206,15 +213,27 @@ main{padding-bottom:120px}
       <label>Or paste text<textarea id="q-text" rows="6" placeholder="Paste your notes here"></textarea></label>
       <button id="q-start" type="button">Create quiz</button>
       <button id="q-clear" class="ghost" type="button">Clear files</button>
-      <label>Or write your own cards and questions<input id="q-own-name" type="text" maxlength="60" placeholder="Quiz name"></label>
-      <button id="q-own" class="ghost" type="button">Start my own quiz</button>
       <p id="q-msg" class="note" role="status"></p>
+    </div>
+    <div class="card" style="margin-top:14px;display:grid;gap:10px">
+      <div class="course">Create your own quiz</div>
+      <p class="note">Write your own questions and answers. No file needed.</p>
+      <label>Quiz name<input id="q-own-name" type="text" maxlength="60" placeholder="Quiz name"></label>
+      <div class="row"><button id="q-own" class="ghost" type="button">Start my own quiz</button></div>
     </div>
   </div>
   <div id="tab-l" hidden>
     <p class="sub">Your saved quizzes. Start one to replay the same questions.</p>
-    <input id="lib-search" type="search" placeholder="Search quizzes by name" aria-label="Search quizzes" style="margin:6px 0 10px">
     <div id="q-saved"></div>
+  </div>
+  <div id="tab-p" hidden>
+    <div class="card" style="padding:18px;display:grid;gap:12px">
+      <div class="course">Your profile</div>
+      <p class="note" id="profile-email"></p>
+      <label>The name we call you<input id="profile-name" type="text" maxlength="30"></label>
+      <div class="row"><button id="profile-save" type="button">Save name</button></div>
+      <p id="profile-msg" class="note" role="status"></p>
+    </div>
   </div>
   <div id="tab-r" hidden>
     <div class="types" id="q-types-run" role="group" aria-label="Quiz type"></div>
@@ -245,7 +264,7 @@ function render(){
   const list = document.getElementById("list");
   list.replaceChildren();
   if (!items.length){ const li = el("div","empty","No assignments yet. Add your first one above."); list.append(li); return; }
-  const term = (($("task-search") && $("task-search").value) || "").trim().toLowerCase();
+  const term = "";
   const shown = term ? items.filter(a => (a.course + " " + (a.title || "")).toLowerCase().includes(term)) : items;
   if (!shown.length){ list.append(el("div","empty","No assignments match \u201c" + term + "\u201d.")); return; }
   const sorted = [...shown].sort((a,b) => a.due.localeCompare(b.due) || a.id - b.id);
@@ -286,11 +305,12 @@ const $ = id => document.getElementById(id);
 let curTab = "a";
 function showTab(n){
   curTab = n;
-  for (const k of ["a","q","l","r"]){ $("tab-" + k).hidden = k !== n; $("t-" + k).setAttribute("aria-pressed", k === n); }
+  for (const k of ["a","q","l","r","p"]){ $("tab-" + k).hidden = k !== n; $("t-" + k).setAttribute("aria-pressed", k === n); }
   if (n === "l") drawSaved();
   if (n === "r") drawQ();
+  if (n === "p") fillProfile();
 }
-for (const k of ["a","q","l","r"]) $("t-" + k).onclick = () => showTab(k);
+for (const k of ["a","q","l","r","p"]) $("t-" + k).onclick = () => showTab(k);
 
 const TYPES = { identification: "Identification", multiple_choice: "Multiple choice", true_false: "True or false", fill_blank: "Fill in the blank", solving: "Solving" };
 const SHAPES = {
@@ -749,8 +769,9 @@ function drawSaved(){
     chips.append(b);
   }
   box.append(chips);
-  const term = (($("lib-search") && $("lib-search").value) || "").trim().toLowerCase();
-  const list = saved.filter(s => (s.mode || "general") === libMode && (!term || (s.name || "").toLowerCase().includes(term)));
+  const term = (($("nav-search") && $("nav-search").value) || "").trim().toLowerCase();
+  const byUser = !!term && displayName.toLowerCase().includes(term);
+  const list = saved.filter(s => ((s.mode || "general") === libMode || !!term) && (!term || byUser || (s.name || "").toLowerCase().includes(term)));
   if (!list.length){
     box.append(el("p", "empty", term ? "No quizzes match \u201c" + term + "\u201d." : "No " + MODE_LABEL[libMode].toLowerCase() + " quizzes yet. Create one in the New quiz tab while this mode is selected."));
     return;
@@ -880,8 +901,7 @@ $("mode").onchange = () => {
   applyMode();
 };
 applyMode();
-$("task-search").oninput = render;
-$("lib-search").oninput = drawSaved;
+$("nav-search").oninput = () => { if ($("nav-search").value.trim()) showTab("l"); else drawSaved(); };
 drawTypes();
 drawQ();
 
@@ -889,7 +909,7 @@ drawQ();
 const SB_URL = "https://oziwceozhehkuitbuqpu.supabase.co";
 const SB_KEY = "sb_publishable_I6XtmZc6OCC5WQ0G5FtzNA_BDQwWqGa";
 let sb = null, syncReady = false, syncTimer = null, currentUserId = null;
-const authMsg = m => { const e = $("sync-msg"); if (e) e.textContent = m; };
+const authMsg = m => { const e = $("sync-msg"); if (e) e.textContent = /^Couldn't|isn't available/.test(m) ? m : ""; };
 function loadSupabase(){
   return new Promise((res, rej) => {
     if (window.supabase) return res();
@@ -951,15 +971,23 @@ async function pullAndMerge(){
   render();
   drawSaved();
 }
+let displayName = "", profileEmail = "";
 function setGreeting(user){
   const hour = new Date().getHours();
   const part = hour >= 5 && hour < 12 ? "Good morning" : hour >= 12 && hour < 17 ? "Good afternoon" : "Good evening";
   const meta = (user && user.user_metadata) || {};
+  displayName = (meta.display_name || meta.full_name || meta.name || "").trim();
+  profileEmail = (user && user.email) || "";
   let name = meta.display_name || meta.full_name || meta.name || (user && user.email ? user.email.split("@")[0] : "");
   $("name-prompt").hidden = !!meta.display_name;
   name = name ? name.trim().split(/\s+/)[0] : "";
   name = name ? name.charAt(0).toUpperCase() + name.slice(1) : "";
   $("greeting").textContent = name ? part + ", " + name + "!" : part + "!";
+}
+function fillProfile(){
+  $("profile-email").textContent = profileEmail ? "Signed in as " + profileEmail : "";
+  $("profile-name").value = displayName;
+  $("profile-msg").textContent = "";
 }
 function gateMsg(t){ const e = $("gate-msg"); if (e) e.textContent = t; }
 async function onSession(session){
@@ -982,6 +1010,14 @@ async function initAuth(){
   try { await loadSupabase(); sb = window.supabase.createClient(SB_URL, SB_KEY); }
   catch (e){ gateMsg("Sign-in isn't available here. Open the SupStudy website to sign in."); return; }
   $("signout").onclick = async () => { await sb.auth.signOut(); };
+  $("profile-save").onclick = async () => {
+    const n = $("profile-name").value.trim();
+    if (!n){ $("profile-msg").textContent = "Enter a name."; return; }
+    const { data, error } = await sb.auth.updateUser({ data: { display_name: n } });
+    if (error){ $("profile-msg").textContent = error.message; return; }
+    setGreeting(data.user);
+    $("profile-msg").textContent = "Saved.";
+  };
   $("name-save").onclick = async () => {
     const n = $("name-input").value.trim();
     if (!n) return;
