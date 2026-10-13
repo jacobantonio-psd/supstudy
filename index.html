@@ -183,6 +183,8 @@ main{padding-bottom:120px}
 <main id="app" hidden>
   <div class="top"><h1>SupStudy</h1><select id="mode" aria-label="Study mode"><option value="general">General</option><option value="accountancy">Accountancy</option><option value="engineering">Engineering</option></select><button id="signout" class="ghost" type="button" hidden>Sign out</button>
 <button id="theme" class="ghost" type="button">Dark mode</button></div>
+  <div id="name-prompt" class="card" hidden style="margin-bottom:14px"><div class="course" style="text-align:center">What should we call you?</div><div class="row" style="justify-content:center"><input id="name-input" type="text" maxlength="30" placeholder="Your name" style="max-width:260px"></div><div class="row" style="justify-content:center"><button id="name-save" type="button">Save</button></div></div>
+  <p id="greeting" style="font-size:1.1rem;font-weight:600;margin:4px 0 14px;color:var(--ink)"></p>
   <p id="sync-msg" class="note" role="status"></p>
   <nav class="tabs"><button type="button" id="t-a" aria-pressed="true">Assignments</button><button type="button" id="t-q" aria-pressed="false">New quiz</button><button type="button" id="t-l" aria-pressed="false">Library</button><button type="button" id="t-r" aria-pressed="false" hidden>Quiz</button></nav>
   <div id="tab-a">
@@ -193,6 +195,7 @@ main{padding-bottom:120px}
     <label class="wide">Assignment (optional)<input id="title" maxlength="100" placeholder="Lab report 2"></label>
     <button type="submit">Add assignment</button>
   </form>
+  <input id="task-search" type="search" placeholder="Search assignments by course or title" aria-label="Search assignments" style="margin:6px 0 4px">
   <ul id="list"></ul>
   </div>
   <div id="tab-q" hidden>
@@ -210,6 +213,7 @@ main{padding-bottom:120px}
   </div>
   <div id="tab-l" hidden>
     <p class="sub">Your saved quizzes. Start one to replay the same questions.</p>
+    <input id="lib-search" type="search" placeholder="Search quizzes by name" aria-label="Search quizzes" style="margin:6px 0 10px">
     <div id="q-saved"></div>
   </div>
   <div id="tab-r" hidden>
@@ -241,7 +245,10 @@ function render(){
   const list = document.getElementById("list");
   list.replaceChildren();
   if (!items.length){ const li = el("div","empty","No assignments yet. Add your first one above."); list.append(li); return; }
-  const sorted = [...items].sort((a,b) => a.due.localeCompare(b.due) || a.id - b.id);
+  const term = (($("task-search") && $("task-search").value) || "").trim().toLowerCase();
+  const shown = term ? items.filter(a => (a.course + " " + (a.title || "")).toLowerCase().includes(term)) : items;
+  if (!shown.length){ list.append(el("div","empty","No assignments match \u201c" + term + "\u201d.")); return; }
+  const sorted = [...shown].sort((a,b) => a.due.localeCompare(b.due) || a.id - b.id);
   for (const a of sorted){
     const d = parse(a.due), rel = relative(a);
     const li = el("li", a.done ? "done" : "");
@@ -742,9 +749,10 @@ function drawSaved(){
     chips.append(b);
   }
   box.append(chips);
-  const list = saved.filter(s => (s.mode || "general") === libMode);
+  const term = (($("lib-search") && $("lib-search").value) || "").trim().toLowerCase();
+  const list = saved.filter(s => (s.mode || "general") === libMode && (!term || (s.name || "").toLowerCase().includes(term)));
   if (!list.length){
-    box.append(el("p", "empty", "No " + MODE_LABEL[libMode].toLowerCase() + " quizzes yet. Create one in the New quiz tab while this mode is selected."));
+    box.append(el("p", "empty", term ? "No quizzes match \u201c" + term + "\u201d." : "No " + MODE_LABEL[libMode].toLowerCase() + " quizzes yet. Create one in the New quiz tab while this mode is selected."));
     return;
   }
   const card = el("div", "card");
@@ -872,6 +880,8 @@ $("mode").onchange = () => {
   applyMode();
 };
 applyMode();
+$("task-search").oninput = render;
+$("lib-search").oninput = drawSaved;
 drawTypes();
 drawQ();
 
@@ -941,6 +951,16 @@ async function pullAndMerge(){
   render();
   drawSaved();
 }
+function setGreeting(user){
+  const hour = new Date().getHours();
+  const part = hour >= 5 && hour < 12 ? "Good morning" : hour >= 12 && hour < 17 ? "Good afternoon" : "Good evening";
+  const meta = (user && user.user_metadata) || {};
+  let name = meta.display_name || meta.full_name || meta.name || (user && user.email ? user.email.split("@")[0] : "");
+  $("name-prompt").hidden = !!meta.display_name;
+  name = name ? name.trim().split(/\s+/)[0] : "";
+  name = name ? name.charAt(0).toUpperCase() + name.slice(1) : "";
+  $("greeting").textContent = name ? part + ", " + name + "!" : part + "!";
+}
 function gateMsg(t){ const e = $("gate-msg"); if (e) e.textContent = t; }
 async function onSession(session){
   const user = session && session.user;
@@ -953,6 +973,7 @@ async function onSession(session){
     return;
   }
   $("gate").hidden = true; $("app").hidden = false; $("signout").hidden = false;
+  setGreeting(user);
   authMsg("Syncing...");
   try { await pullAndMerge(); }
   catch (e){ syncReady = false; authMsg("Couldn't sync: " + (e.message || "error") + ". Your data is still saved on this device."); }
@@ -961,6 +982,13 @@ async function initAuth(){
   try { await loadSupabase(); sb = window.supabase.createClient(SB_URL, SB_KEY); }
   catch (e){ gateMsg("Sign-in isn't available here. Open the SupStudy website to sign in."); return; }
   $("signout").onclick = async () => { await sb.auth.signOut(); };
+  $("name-save").onclick = async () => {
+    const n = $("name-input").value.trim();
+    if (!n) return;
+    const { data, error } = await sb.auth.updateUser({ data: { display_name: n } });
+    if (error){ authMsg(error.message); return; }
+    setGreeting(data.user);
+  };
   sb.auth.onAuthStateChange((event, session) => { onSession(session); });
 }
 render();
