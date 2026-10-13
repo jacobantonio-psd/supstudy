@@ -224,7 +224,7 @@ html.nav-hidden main{padding-bottom:70px}
 <button id="nav-show" type="button" aria-expanded="false" aria-controls="nav-panel">Menu</button>
 <div id="gate" class="card gate"><p id="gate-msg" class="note">Checking sign-in...</p></div>
 <main id="app" hidden>
-  <div class="top"><h1>SupStudy</h1><select id="mode" aria-label="Study mode"><option value="general">General</option></select><button id="theme" class="ghost" type="button">Dark mode</button></div>
+  <div class="top"><h1>SupStudy</h1><button id="theme" class="ghost" type="button">Dark mode</button></div>
   <div id="name-prompt" class="card" hidden style="margin-bottom:14px"><div class="course" style="text-align:center">What should we call you?</div><div class="row" style="justify-content:center"><input id="name-input" type="text" maxlength="30" placeholder="Your name" style="max-width:260px"></div><div class="row" style="justify-content:center"><button id="name-save" type="button">Save</button></div></div>
   <p id="greeting" style="font-size:1.1rem;font-weight:600;margin:4px 0 14px;color:var(--ink)"></p>
   <p id="sync-msg" class="note" role="status"></p>
@@ -968,12 +968,12 @@ function visibleTypes(){
 function applyMode(){
   libMode = studyMode;
   document.documentElement.setAttribute("data-mode", studyMode);
-  $("mode").value = studyMode;
+  if ($("mode")) $("mode").value = studyMode;
   if (studyMode === "accountancy" || studyMode === "engineering") qType = "solving";
   else if (qType === "solving") qType = "multiple_choice";
   drawTypes();
 }
-$("mode").onchange = () => {
+if ($("mode")) $("mode").onchange = () => {
   studyMode = $("mode").value;
   try { localStorage.setItem("mode-v1", studyMode); } catch (e) {}
   applyMode();
