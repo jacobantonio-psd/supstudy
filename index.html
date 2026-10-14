@@ -218,6 +218,8 @@ html.nav-hidden main{padding-bottom:70px}
 .search-ico{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--ink);opacity:.8;pointer-events:none}
 #nav-search{width:100%;background:var(--search-bg);padding-left:38px}
 @media (min-width:900px){.search-wrap{order:0;flex:0 0 auto}}
+
+@media print{.tabs,#nav-show,.top,#gate,.search-wrap,#nav-hide{display:none !important}main{margin:0 !important;max-width:none !important;padding:0 !important}}
 </style>
 </head>
 <body>
@@ -245,6 +247,7 @@ html.nav-hidden main{padding-bottom:70px}
   </div>
   <div id="tab-q" hidden>
     <p class="sub">Upload notes or paste text and get a quiz that covers every topic in it. Each quiz is saved to your library automatically.</p>
+    <div class="types" id="output-kind" role="group" aria-label="What to make"><button type="button" id="ok-quiz" aria-pressed="true">Quiz</button><button type="button" id="ok-rev" aria-pressed="false">Comprehensive reviewer</button></div>
     <div class="types" id="q-types" role="group" aria-label="Quiz type"></div>
     <div class="types" id="mixed-pick" role="group" aria-label="Kinds to mix" hidden></div>
     <div id="q-setup" class="card">
@@ -254,7 +257,7 @@ html.nav-hidden main{padding-bottom:70px}
       <button id="q-clear" class="ghost" type="button">Clear files</button>
       <p id="q-msg" class="note" role="status"></p>
     </div>
-    <div class="card" style="margin-top:14px;display:grid;gap:10px">
+    <div class="card" id="own-card" style="margin-top:14px;display:grid;gap:10px">
       <div class="course">Create your own quiz</div>
       <p class="note">Write your own questions and answers. No file needed.</p>
       <label>Quiz name<input id="q-own-name" type="text" maxlength="60" placeholder="Quiz name"></label>
@@ -353,7 +356,7 @@ function showTab(n){
 }
 for (const k of ["a","q","l","r","p"]) $("t-" + k).onclick = () => showTab(k);
 
-const TYPES = { identification: "Identification", multiple_choice: "Multiple choice", true_false: "True or false", fill_blank: "Fill in the blank", solving: "Solving", mixed: "Mixed" };
+const TYPES = { identification: "Identification", multiple_choice: "Multiple choice", true_false: "True or false", fill_blank: "Fill in the blank", solving: "Solving", mixed: "Mixed", reviewer: "Reviewer" };
 const SHAPES = {
   mixed: '{"kind":"multiple_choice, true_false, identification or fill_blank","q":"a question","options":["A","B","C","D"] (multiple_choice only),"answer":0 (multiple_choice: index of the correct option; true_false: true or false; other kinds: the answer text),"alt":["other accepted answers"] (text kinds only),"why":"one sentence"}. Mixed means each question picks one of the four kinds, with roughly equal numbers of each kind.',
   solving: '{"q":"a scenario using figures from the material, asking for one computed result","answer":"the final number with its unit, or the exact term","alt":["equivalent forms of the answer"],"why":"the solution steps with the numbers"}',
@@ -374,11 +377,12 @@ function uniqueName(base, type){
   return n;
 }
 
+let outputKind = "quiz";
 let mixedKinds = ["multiple_choice", "true_false", "identification", "fill_blank"];
 const KIND_LABEL = { multiple_choice: "Multiple choice", true_false: "True or false", identification: "Identification", fill_blank: "Fill in the blank" };
 function drawMixedPick(){
   const box = $("mixed-pick");
-  box.hidden = qType !== "mixed";
+  box.hidden = outputKind !== "quiz" || qType !== "mixed";
   if (box.hidden) return;
   box.replaceChildren();
   for (const [k, v] of Object.entries(KIND_LABEL)){
@@ -540,6 +544,7 @@ async function buildQuestions(sample, text, type, my){
 }
 
 async function startQuiz(){
+  if (curTab === "q" && outputKind === "reviewer") return startReviewer();
   const fromRun = curTab === "r" && !!quiz;
   if (fromRun) exitPractice();
   const fail = m => { if (fromRun){ runErr = m; drawQ(); } else qmsg(m); };
@@ -805,6 +810,107 @@ function practiceMissed(){
   quiz.practice = true; quiz.questions = missed.slice();
   qi = 0; score = 0; missed = []; runErr = ""; drawQ();
 }
+function setOutputKind(k){
+  outputKind = k;
+  $("ok-quiz").setAttribute("aria-pressed", String(k === "quiz"));
+  $("ok-rev").setAttribute("aria-pressed", String(k === "reviewer"));
+  $("q-types").hidden = k !== "quiz";
+  $("own-card").hidden = k !== "quiz";
+  $("q-start").textContent = k === "reviewer" ? "Create reviewer" : "Create quiz";
+  drawMixedPick();
+}
+$("ok-quiz").onclick = () => setOutputKind("quiz");
+$("ok-rev").onclick = () => setOutputKind("reviewer");
+
+async function askReviewerPart(sample, part, n, total){
+  const prompt = "You write comprehensive study reviewers. Below is part " + n + " of " + total + " of a study file. Cover EVERY topic in this part: make one section per topic, with a clear heading, its key points as short sentences, and its key terms with their meanings. Use only facts stated in this part. Return ONLY JSON, no markdown: {\"sections\":[{\"heading\":\"...\",\"points\":[\"...\"],\"terms\":[{\"term\":\"...\",\"meaning\":\"...\"}]}]}\n\nPART " + n + ":\n" + part;
+  for (let attempt = 0; ; attempt++){
+    try {
+      const data = await sample.json(prompt, { modelTier: "default", cache: false });
+      const secs = (data.sections || []).filter(s => s && typeof s.heading === "string" && s.heading.trim()).map(s => ({
+        heading: s.heading.trim(),
+        points: (Array.isArray(s.points) ? s.points : []).map(String).filter(p => p.trim()),
+        terms: (Array.isArray(s.terms) ? s.terms : []).filter(t => t && t.term && t.meaning).map(t => ({ term: String(t.term), meaning: String(t.meaning) }))
+      }));
+      if (!secs.length) throw new Error("empty");
+      return secs;
+    } catch (e){
+      if (attempt >= 2 || (e && e.code === "not_granted")) throw e;
+      await sleep(e && e.code === "rate_limited" ? 4000 * (attempt + 1) : 1000);
+    }
+  }
+}
+async function buildReviewer(sample, text, my){
+  const parts = chunkText(text), results = new Array(parts.length);
+  let next = 0, done = 0;
+  const worker = async () => {
+    while (next < parts.length && my === token){
+      const i = next++;
+      results[i] = await askReviewerPart(sample, parts[i], i + 1, parts.length);
+      done++;
+      if (my === token) setProgress("Writing part " + done + " of " + parts.length + "...");
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  if (my !== token) return null;
+  return results.flat();
+}
+async function startReviewer(){
+  const text = $("q-text").value.trim();
+  if (text.length < 200){ qmsg("Add a longer file or paste a few paragraphs first."); return; }
+  const sample = await getSampler();
+  const my = ++token, base = quizName || "Untitled reviewer";
+  busy = true; progressText = "Reading all of your text..."; $("q-start").disabled = true; qmsg(progressText);
+  try {
+    const sections = await buildReviewer(sample, text, my);
+    if (sections === null || my !== token) return;
+    if (!sections.length) throw new Error("empty");
+    const entry = { id: Date.now(), name: uniqueName(base, "reviewer"), type: "reviewer", questions: sections, source: text, mode: "general" };
+    saved.push(entry);
+    let warn = "";
+    if (!persist()){ saved.pop(); warn = "Couldn't save to your library: browser storage is full."; }
+    quizName = ""; busy = false; progressText = ""; $("q-start").disabled = false;
+    if (warn){ qmsg(warn); return; }
+    qmsg("");
+    openReviewer(entry);
+  } catch (e){
+    if (my !== token) return;
+    busy = false; progressText = ""; $("q-start").disabled = false;
+    qmsg(e && e.code === "rate_limited" ? "Too many requests. Wait a minute and try again." : "Couldn't finish the reviewer. Try again.");
+  }
+}
+function openReviewer(s){
+  showTab("r");
+  drawReviewer(s);
+}
+function drawReviewer(s){
+  const run = $("q-body"); run.replaceChildren();
+  $("t-r").hidden = false;
+  run.append(el("div", "course", s.name), el("div", "note", s.questions.length + " sections"));
+  for (const sec of s.questions){
+    const card = el("div", "qcard");
+    card.append(el("p", "qtext", sec.heading));
+    if (sec.points.length){
+      const ul = document.createElement("ul");
+      for (const p of sec.points){ const li = document.createElement("li"); li.textContent = p; ul.append(li); }
+      card.append(ul);
+    }
+    if (sec.terms.length){
+      card.append(el("div", "course", "Key terms"));
+      for (const t of sec.terms){
+        const d = el("div", "note");
+        d.append(el("b", "", t.term), document.createTextNode(": " + t.meaning));
+        card.append(d);
+      }
+    }
+    run.append(card);
+  }
+  const row = el("div", "row");
+  const back = el("button", "ghost", "Back to library"); back.onclick = () => showTab("l");
+  const pr = el("button", "ghost", "Print"); pr.onclick = () => window.print();
+  row.append(back, pr); run.append(row);
+}
+
 function drawResult(run){
   const n = quiz.questions.length, pct = Math.round(score / n * 100);
   const wrap = el("div", "result");
@@ -856,10 +962,11 @@ function drawSaved(){
   const card = el("div", "card");
   for (const s of [...list].reverse()){
     const row = el("div", "row"), info = el("div"); info.style.flex = "1 1 160px";
-    info.append(el("div", "course", s.name), el("div", "note", TYPES[s.type] + ", " + s.questions.length + " questions"));
+    info.append(el("div", "course", s.name), el("div", "note", TYPES[s.type] + ", " + s.questions.length + (s.type === "reviewer" ? " sections" : " questions")));
     const go = el("button", "", "Open"), ed = el("button", "ghost", "Edit"), del = el("button", "ghost", "Delete");
-    go.onclick = () => openSaved(s.id);
+    go.onclick = () => (s.type === "reviewer" ? openReviewer(s) : openSaved(s.id));
     ed.onclick = () => { openSaved(s.id); drawQuestionList(); };
+    if (s.type === "reviewer") ed.hidden = true;
     del.onclick = () => {
       if (del.dataset.arm){
         saved = saved.filter(x => x.id !== s.id); persist();
@@ -962,7 +1069,7 @@ function modeHint(){
 }
 function visibleTypes(){
   if (studyMode === "accountancy" || studyMode === "engineering") return { solving: TYPES.solving };
-  const { solving, ...rest } = TYPES;
+  const { solving, reviewer, ...rest } = TYPES;
   return rest;
 }
 function applyMode(){
