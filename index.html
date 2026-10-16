@@ -302,6 +302,7 @@ function relative(a){
   return { text: "Due in " + diff + " days", late: false };
 }
 
+let editingId = null;
 function render(){
   const list = document.getElementById("list");
   list.replaceChildren();
@@ -312,6 +313,28 @@ function render(){
   const sorted = [...shown].sort((a,b) => a.due.localeCompare(b.due) || a.id - b.id);
   for (const a of sorted){
     const d = parse(a.due), rel = relative(a);
+    if (editingId === a.id){
+      const eli = el("li", "");
+      eli.style.gridTemplateColumns = "1fr";
+      const f = el("div", "editor");
+      const c = document.createElement("input"); c.type = "text"; c.value = a.course; c.maxLength = 60; c.setAttribute("aria-label", "Course name");
+      const t = document.createElement("input"); t.type = "text"; t.value = a.title || ""; t.maxLength = 100; t.placeholder = "Assignment (optional)"; t.setAttribute("aria-label", "Assignment");
+      const dd = document.createElement("input"); dd.type = "date"; dd.value = a.due; dd.setAttribute("aria-label", "Due date");
+      const msg = el("div", "fb no");
+      const sv = el("button", "", "Save"); sv.type = "button";
+      const cn = el("button", "ghost", "Cancel"); cn.type = "button";
+      sv.onclick = () => {
+        const course = c.value.trim();
+        if (!course || !dd.value){ msg.textContent = "Course and due date are required."; return; }
+        Object.assign(a, { course, title: t.value.trim(), due: dd.value });
+        editingId = null; save(); render();
+      };
+      cn.onclick = () => { editingId = null; render(); };
+      const btns = el("div", "row"); btns.append(sv, cn);
+      f.append(labelled("Course name", c), labelled("Assignment (optional)", t), labelled("Due date", dd), msg, btns);
+      eli.append(f); list.append(eli);
+      continue;
+    }
     const li = el("li", a.done ? "done" : "");
     const tile = el("div","tile");
     tile.append(el("span","",d.toLocaleDateString(undefined,{month:"short"})), el("b","",String(d.getDate())));
@@ -321,7 +344,11 @@ function render(){
     body.append(el("div","note" + (rel.late ? " late" : ""), rel.text + " · " + d.toLocaleDateString(undefined,{weekday:"short",year:"numeric",month:"short",day:"numeric"})));
     const btn = el("button", a.done ? "ghost" : "", a.done ? "Undo" : "Mark complete");
     btn.dataset.id = a.id;
-    li.append(tile, body, btn);
+    const ed = el("button", "ghost", "Edit"); ed.dataset.id = a.id; ed.dataset.act = "edit";
+    const del = el("button", "ghost", "Delete"); del.dataset.id = a.id; del.dataset.act = "delete";
+    const acts = el("div", "row"); acts.style.gap = "6px"; acts.style.justifyContent = "flex-end";
+    acts.append(btn, ed, del);
+    li.append(tile, body, acts);
     list.append(li);
   }
 }
@@ -329,7 +356,12 @@ function render(){
 document.getElementById("list").addEventListener("click", e => {
   const b = e.target.closest("button"); if(!b) return;
   const a = items.find(x => x.id === Number(b.dataset.id));
-  if (a){ a.done = !a.done; save(); render(); }
+  if (!a) return;
+  if (b.dataset.act === "edit"){ editingId = a.id; render(); }
+  else if (b.dataset.act === "delete"){
+    if (confirm("Delete this assignment?")){ items = items.filter(x => x.id !== a.id); save(); render(); }
+  }
+  else { a.done = !a.done; save(); render(); }
 });
 
 const due = document.getElementById("due");
@@ -682,11 +714,11 @@ function toolsRow(empty){
     const ed = el("button", "ghost", "Edit this question"); ed.onclick = () => editorFor(qi);
     const del = el("button", "ghost", "Delete question");
     del.onclick = () => {
-      if (del.dataset.arm){
+      if (confirm("Delete this question?")){
         quiz.questions.splice(qi, 1);
         if (qi >= quiz.questions.length) qi = Math.max(0, quiz.questions.length - 1);
         syncLib(); drawQ();
-      } else { del.dataset.arm = "1"; del.textContent = "Confirm delete"; }
+      }
     };
     const all = el("button", "ghost", "All questions"); all.onclick = () => drawQuestionList();
     row.append(ed, del, all);
@@ -788,8 +820,7 @@ function drawQuestionList(){
     const ed = el("button", "ghost", "Edit"), del = el("button", "ghost", "Delete");
     ed.onclick = () => { editReturn = drawQuestionList; editorFor(i); };
     del.onclick = () => {
-      if (del.dataset.arm){ quiz.questions.splice(i, 1); syncLib(); drawQuestionList(); }
-      else { del.dataset.arm = "1"; del.textContent = "Confirm"; }
+      if (confirm("Delete this question?")){ quiz.questions.splice(i, 1); syncLib(); drawQuestionList(); }
     };
     r.append(info, ed, del); card.append(r); run.append(card);
   });
@@ -865,11 +896,11 @@ function drawSaved(){
     go.onclick = () => openSaved(s.id);
     ed.onclick = () => { openSaved(s.id); drawQuestionList(); };
     del.onclick = () => {
-      if (del.dataset.arm){
+      if (confirm("Delete this quiz from your library?")){
         saved = saved.filter(x => x.id !== s.id); persist();
         if (quiz && quiz.savedId === s.id){ quiz = null; runErr = ""; $("t-r").hidden = true; if (curTab === "r") showTab("l"); }
         drawSaved();
-      } else { del.dataset.arm = "1"; del.textContent = "Confirm delete"; }
+      }
     };
     row.append(info, go, ed, del); card.append(row);
   }
