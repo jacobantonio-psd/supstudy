@@ -949,14 +949,23 @@ function openReviewer(s){
   showTab("v");
   drawReviewer(s);
 }
-function drawReviewer(s){
+let rvCurrent = null, rvTermsOnly = false;
+function drawReviewer(s, keepMode){
+  rvCurrent = s;
+  if (!keepMode) rvTermsOnly = false;
   const run = $("rv-view"); run.replaceChildren();
   $("rv-form").hidden = true; run.hidden = false;
   run.append(el("div", "course", s.name), el("div", "note", s.questions.length + " sections"));
+  const top = el("div", "row");
+  const tb = el("button", "ghost", rvTermsOnly ? "Show full reviewer" : "Key terms only");
+  tb.onclick = () => { rvTermsOnly = !rvTermsOnly; drawReviewer(s, true); };
+  top.append(tb);
+  run.append(top);
   for (const sec of s.questions){
+    if (rvTermsOnly && !sec.terms.length) continue;
     const card = el("div", "qcard");
     card.append(el("p", "qtext", sec.heading));
-    if (sec.points.length){
+    if (!rvTermsOnly && sec.points.length){
       const ul = document.createElement("ul");
       for (const p of sec.points){ const li = document.createElement("li"); li.textContent = p; ul.append(li); }
       card.append(ul);
@@ -971,6 +980,7 @@ function drawReviewer(s){
     }
     run.append(card);
   }
+  if (rvTermsOnly && !s.questions.some(sec => sec.terms.length)) run.append(el("p", "note", "This reviewer has no key terms."));
   const row = el("div", "row");
   const back = el("button", "ghost", "Back to library"); back.onclick = () => showTab("l");
   const nw = el("button", "ghost", "New reviewer");
@@ -978,7 +988,6 @@ function drawReviewer(s){
   const pr = el("button", "ghost", "Print"); pr.onclick = () => window.print();
   row.append(back, nw, pr); run.append(row);
 }
-
 function drawResult(run){
   const n = quiz.questions.length, pct = Math.round(score / n * 100);
   const wrap = el("div", "result");
