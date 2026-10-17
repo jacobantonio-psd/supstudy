@@ -221,6 +221,10 @@ html.nav-hidden main{padding-bottom:70px}
 
 
 @media print{.tabs,#nav-show,.top,#gate,.search-wrap,#nav-hide{display:none !important}main{margin:0 !important;max-width:none !important;padding:0 !important}}
+
+.qcard ul{display:block;margin:6px 0 0;padding-left:22px}
+.qcard li{display:list-item;grid-template-columns:none;background:none;border:none;box-shadow:none;border-radius:0;padding:2px 0;position:static;margin:0}
+.qcard li::before{display:none}
 </style>
 </head>
 <body>
@@ -271,13 +275,14 @@ html.nav-hidden main{padding-bottom:70px}
   </div>
   <div id="tab-v" hidden>
     <p class="sub">Make a comprehensive reviewer: every topic in the file, with key points and key terms.</p>
-    <div class="card" style="display:grid;gap:12px;padding:18px">
+    <div id="rv-form" class="card" style="display:grid;gap:12px;padding:18px">
       <label>Upload files (.pdf, .txt, .md, .csv, .json, .html)<input id="rv-file" type="file" multiple accept=".pdf,application/pdf,.txt,.md,.markdown,.csv,.json,.html,.htm,text/*"></label>
       <label>Or paste text<textarea id="rv-text" rows="6" placeholder="Paste your notes here"></textarea></label>
       <label>Reviewer name<input id="rv-name" type="text" maxlength="60" placeholder="Reviewer name"></label>
       <div class="row"><button id="rv-start" type="button">Create reviewer</button><button id="rv-clear" class="ghost" type="button">Clear</button></div>
       <p id="rv-msg" class="note" role="status"></p>
     </div>
+    <div id="rv-view" hidden></div>
   </div>
   <div id="tab-p" hidden>
     <div class="card" style="padding:18px;display:grid;gap:12px">
@@ -941,12 +946,12 @@ async function startReviewer(){
   }
 }
 function openReviewer(s){
-  showTab("r");
+  showTab("v");
   drawReviewer(s);
 }
 function drawReviewer(s){
-  const run = $("q-body"); run.replaceChildren();
-  $("t-r").hidden = false;
+  const run = $("rv-view"); run.replaceChildren();
+  $("rv-form").hidden = true; run.hidden = false;
   run.append(el("div", "course", s.name), el("div", "note", s.questions.length + " sections"));
   for (const sec of s.questions){
     const card = el("div", "qcard");
@@ -968,8 +973,10 @@ function drawReviewer(s){
   }
   const row = el("div", "row");
   const back = el("button", "ghost", "Back to library"); back.onclick = () => showTab("l");
+  const nw = el("button", "ghost", "New reviewer");
+  nw.onclick = () => { run.replaceChildren(); run.hidden = true; $("rv-form").hidden = false; rvmsg(""); };
   const pr = el("button", "ghost", "Print"); pr.onclick = () => window.print();
-  row.append(back, pr); run.append(row);
+  row.append(back, nw, pr); run.append(row);
 }
 
 function drawResult(run){
