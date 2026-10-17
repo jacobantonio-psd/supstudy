@@ -219,6 +219,8 @@ html.nav-hidden main{padding-bottom:70px}
 #nav-search{width:100%;background:var(--search-bg);padding-left:38px}
 @media (min-width:900px){.search-wrap{order:0;flex:0 0 auto}}
 
+
+@media print{.tabs,#nav-show,.top,#gate,.search-wrap,#nav-hide{display:none !important}main{margin:0 !important;max-width:none !important;padding:0 !important}}
 </style>
 </head>
 <body>
@@ -231,7 +233,8 @@ html.nav-hidden main{padding-bottom:70px}
   <p id="sync-msg" class="note" role="status"></p>
   <nav class="tabs">
     <button id="nav-hide" class="ghost" type="button" aria-expanded="true" aria-controls="nav-panel">Hide menu</button>
-    <div class="search-wrap"><svg class="search-ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input id="nav-search" type="search" placeholder="Search quizzes" aria-label="Search quizzes"></div><button type="button" id="t-a" aria-pressed="true">Assignments</button><button type="button" id="t-q" aria-pressed="false">New quiz</button><button type="button" id="t-l" aria-pressed="false">Library</button><button type="button" id="t-r" aria-pressed="false" hidden>Quiz</button>
+    <div class="search-wrap"><svg class="search-ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input id="nav-search" type="search" placeholder="Search quizzes" aria-label="Search quizzes"></div><button type="button" id="t-a" aria-pressed="true">Assignments</button><button type="button" id="t-q" aria-pressed="false">New quiz</button>
+    <button type="button" id="t-v" aria-pressed="false">Reviewer</button><button type="button" id="t-l" aria-pressed="false">Library</button><button type="button" id="t-r" aria-pressed="false" hidden>Quiz</button>
     <div class="navrow"><button type="button" id="t-p" aria-pressed="false"><span class="avatar"><img id="nav-avatar" alt="" hidden></span><span>Profile</span></button>
       <button id="signout" class="icon-btn" type="button" hidden aria-label="Sign out" title="Sign out"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#E0444E" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 3v8"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/></svg></button></div></nav>
   <div id="tab-a">
@@ -265,6 +268,16 @@ html.nav-hidden main{padding-bottom:70px}
   <div id="tab-l" hidden>
     <p class="sub">Your saved quizzes. Start one to replay the same questions.</p>
     <div id="q-saved"></div>
+  </div>
+  <div id="tab-v" hidden>
+    <p class="sub">Make a comprehensive reviewer: every topic in the file, with key points and key terms.</p>
+    <div class="card" style="display:grid;gap:12px;padding:18px">
+      <label>Upload files (.pdf, .txt, .md, .csv, .json, .html)<input id="rv-file" type="file" multiple accept=".pdf,application/pdf,.txt,.md,.markdown,.csv,.json,.html,.htm,text/*"></label>
+      <label>Or paste text<textarea id="rv-text" rows="6" placeholder="Paste your notes here"></textarea></label>
+      <label>Reviewer name<input id="rv-name" type="text" maxlength="60" placeholder="Reviewer name"></label>
+      <div class="row"><button id="rv-start" type="button">Create reviewer</button><button id="rv-clear" class="ghost" type="button">Clear</button></div>
+      <p id="rv-msg" class="note" role="status"></p>
+    </div>
   </div>
   <div id="tab-p" hidden>
     <div class="card" style="padding:18px;display:grid;gap:12px">
@@ -379,14 +392,14 @@ const $ = id => document.getElementById(id);
 let curTab = "a";
 function showTab(n){
   curTab = n;
-  for (const k of ["a","q","l","r","p"]){ $("tab-" + k).hidden = k !== n; $("t-" + k).setAttribute("aria-pressed", k === n); }
+  for (const k of ["a","q","v","l","r","p"]){ $("tab-" + k).hidden = k !== n; $("t-" + k).setAttribute("aria-pressed", k === n); }
   if (n === "l") drawSaved();
   if (n === "r") drawQ();
   if (n === "p") fillProfile();
 }
-for (const k of ["a","q","l","r","p"]) $("t-" + k).onclick = () => showTab(k);
+for (const k of ["a","q","v","l","r","p"]) $("t-" + k).onclick = () => showTab(k);
 
-const TYPES = { identification: "Identification", multiple_choice: "Multiple choice", true_false: "True or false", fill_blank: "Fill in the blank", solving: "Solving", mixed: "Mixed", };
+const TYPES = { identification: "Identification", multiple_choice: "Multiple choice", true_false: "True or false", fill_blank: "Fill in the blank", solving: "Solving", mixed: "Mixed", reviewer: "Reviewer" };
 const SHAPES = {
   mixed: '{"kind":"multiple_choice, true_false, identification or fill_blank","q":"a question","options":["A","B","C","D"] (multiple_choice only),"answer":0 (multiple_choice: index of the correct option; true_false: true or false; other kinds: the answer text),"alt":["other accepted answers"] (text kinds only),"why":"one sentence"}. Mixed means each question picks one of the four kinds, with roughly equal numbers of each kind.',
   solving: '{"q":"a scenario using figures from the material, asking for one computed result","answer":"the final number with its unit, or the exact term","alt":["equivalent forms of the answer"],"why":"the solution steps with the numbers"}',
@@ -840,6 +853,125 @@ function practiceMissed(){
   quiz.practice = true; quiz.questions = missed.slice();
   qi = 0; score = 0; missed = []; runErr = ""; drawQ();
 }
+let reviewerParts = [];
+function rvmsg(t){ $("rv-msg").textContent = t; }
+$("rv-file").addEventListener("change", async e => {
+  const files = Array.from(e.target.files || []);
+  e.target.value = "";
+  if (!files.length) return;
+  if (files.some(f => /\.(docx?|pptx?)$/i.test(f.name))){ rvmsg("Word and PowerPoint files aren't supported. Save them as PDF or .txt first."); return; }
+  rvmsg("Reading " + files.length + " file" + (files.length > 1 ? "s" : "") + "...");
+  const added = [];
+  try {
+    for (const f of files){
+      const isPdf = /\.pdf$/i.test(f.name);
+      let t = isPdf ? await pdfText(f) : await f.text();
+      if (/\.html?$/i.test(f.name)) t = new DOMParser().parseFromString(t, "text/html").body.textContent;
+      if (isPdf && t.trim().length < 200){ rvmsg(f.name + " has no readable text. It may be a scan. Paste its text instead."); continue; }
+      added.push("=== " + f.name + " ===\n" + t.trim());
+      if (!$("rv-name").value.trim()) $("rv-name").value = f.name.replace(/\.[^.]+$/, "");
+    }
+  } catch (err){ rvmsg("Couldn't read one of the files here."); }
+  $("rv-text").value = [$("rv-text").value.trim(), ...added].filter(Boolean).join("\n\n");
+  if (added.length) rvmsg("Added " + added.length + " file" + (added.length > 1 ? "s" : "") + ".");
+});
+$("rv-clear").onclick = () => { $("rv-text").value = ""; $("rv-name").value = ""; rvmsg(""); };
+$("rv-start").onclick = () => startReviewer();
+
+async function askReviewerPart(sample, part, n, total){
+  const prompt = "You write comprehensive study reviewers. Below is part " + n + " of " + total + " of a study file. Cover EVERY topic in this part: make one section per topic, with a clear heading, its key points as short sentences, and its key terms with their meanings. Use only facts stated in this part. Return ONLY JSON, no markdown: {\"sections\":[{\"heading\":\"...\",\"points\":[\"...\"],\"terms\":[{\"term\":\"...\",\"meaning\":\"...\"}]}]}\n\nPART " + n + ":\n" + part;
+  for (let attempt = 0; ; attempt++){
+    try {
+      const data = await sample.json(prompt, { modelTier: "default", cache: false });
+      const secs = (data.sections || []).filter(s => s && typeof s.heading === "string" && s.heading.trim()).map(s => ({
+        heading: s.heading.trim(),
+        points: (Array.isArray(s.points) ? s.points : []).map(String).filter(p => p.trim()),
+        terms: (Array.isArray(s.terms) ? s.terms : []).filter(t => t && t.term && t.meaning).map(t => ({ term: String(t.term), meaning: String(t.meaning) }))
+      }));
+      if (!secs.length) throw new Error("empty");
+      return secs;
+    } catch (e){
+      const limited = e && e.code === "rate_limited";
+      if (attempt >= (limited ? 4 : 2) || (e && e.code === "not_granted")) throw e;
+      await sleep(limited ? 15000 * (attempt + 1) : 1000);
+    }
+  }
+}
+async function buildReviewer(sample, text, my){
+  const parts = chunkText(text, 3000), results = new Array(parts.length);
+  let next = 0, done = 0;
+  const worker = async () => {
+    while (next < parts.length && my === token){
+      const i = next++;
+      results[i] = await askReviewerPart(sample, parts[i], i + 1, parts.length);
+      await sleep(1500);
+      done++;
+      if (my === token) rvmsg("Writing part " + done + " of " + parts.length + "...");
+    }
+  };
+  await Promise.all([worker()]);
+  if (my !== token) return null;
+  return results.flat();
+}
+async function startReviewer(){
+  const text = $("rv-text").value.trim();
+  if (text.length < 200){ rvmsg("Add a longer file or paste a few paragraphs first."); return; }
+  const sample = await getSampler();
+  const my = ++token, name = $("rv-name").value.trim() || "Untitled reviewer";
+  busy = true; $("rv-start").disabled = true; rvmsg("Reading all of your text...");
+  try {
+    const sections = await buildReviewer(sample, text, my);
+    if (sections === null || my !== token) return;
+    if (!sections.length) throw new Error("empty");
+    const entry = { id: Date.now(), name: uniqueName(name, "reviewer"), type: "reviewer", questions: sections, source: text, mode: "general" };
+    saved.push(entry);
+    if (!persist()){ saved.pop(); rvmsg("Couldn't save to your library: browser storage is full."); return; }
+    rvmsg("");
+    openReviewer(entry);
+  } catch (e){
+    if (my !== token) return;
+    const m = (e && e.message) || "";
+    rvmsg(e && e.code === "rate_limited" ? "Too many requests. Wait a minute and try again."
+      : m === "empty" ? "The AI didn't return any sections for this file. Try again, or use a file with more text."
+      : /AI service|Server is missing|Could not reach/.test(m) ? "Couldn't finish the reviewer: " + m
+      : e instanceof SyntaxError || m === "bad json" ? "The AI's answer couldn't be read. Try again."
+      : "Couldn't finish the reviewer" + (m ? " (" + m + ")" : "") + ". Try again.");
+  } finally {
+    busy = false; $("rv-start").disabled = false;
+  }
+}
+function openReviewer(s){
+  showTab("r");
+  drawReviewer(s);
+}
+function drawReviewer(s){
+  const run = $("q-body"); run.replaceChildren();
+  $("t-r").hidden = false;
+  run.append(el("div", "course", s.name), el("div", "note", s.questions.length + " sections"));
+  for (const sec of s.questions){
+    const card = el("div", "qcard");
+    card.append(el("p", "qtext", sec.heading));
+    if (sec.points.length){
+      const ul = document.createElement("ul");
+      for (const p of sec.points){ const li = document.createElement("li"); li.textContent = p; ul.append(li); }
+      card.append(ul);
+    }
+    if (sec.terms.length){
+      card.append(el("div", "course", "Key terms"));
+      for (const t of sec.terms){
+        const d = el("div", "note");
+        d.append(el("b", "", t.term), document.createTextNode(": " + t.meaning));
+        card.append(d);
+      }
+    }
+    run.append(card);
+  }
+  const row = el("div", "row");
+  const back = el("button", "ghost", "Back to library"); back.onclick = () => showTab("l");
+  const pr = el("button", "ghost", "Print"); pr.onclick = () => window.print();
+  row.append(back, pr); run.append(row);
+}
+
 function drawResult(run){
   const n = quiz.questions.length, pct = Math.round(score / n * 100);
   const wrap = el("div", "result");
@@ -891,10 +1023,11 @@ function drawSaved(){
   const card = el("div", "card");
   for (const s of [...list].reverse()){
     const row = el("div", "row"), info = el("div"); info.style.flex = "1 1 160px";
-    info.append(el("div", "course", s.name), el("div", "note", TYPES[s.type] + ", " + s.questions.length + " questions"));
+    info.append(el("div", "course", s.name), el("div", "note", TYPES[s.type] + ", " + s.questions.length + (s.type === "reviewer" ? " sections" : " questions")));
     const go = el("button", "", "Open"), ed = el("button", "ghost", "Edit"), del = el("button", "ghost", "Delete");
-    go.onclick = () => openSaved(s.id);
+    go.onclick = () => (s.type === "reviewer" ? openReviewer(s) : openSaved(s.id));
     ed.onclick = () => { openSaved(s.id); drawQuestionList(); };
+    if (s.type === "reviewer") ed.hidden = true;
     del.onclick = () => {
       if (confirm("Delete this quiz from your library?")){
         saved = saved.filter(x => x.id !== s.id); persist();
@@ -997,7 +1130,7 @@ function modeHint(){
 }
 function visibleTypes(){
   if (studyMode === "accountancy" || studyMode === "engineering") return { solving: TYPES.solving };
-  const { solving, ...rest } = TYPES;
+  const { solving, reviewer, ...rest } = TYPES;
   return rest;
 }
 function applyMode(){
