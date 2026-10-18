@@ -679,21 +679,51 @@ function nameBar(){
   return wrap;
 }
 
-const PART_SIZE = 5;
+const PART_SIZE = 10;
 let sess = null;
 function newSession(q){
   const n = q.questions.length, parts = [];
   for (let i = 0; i < n; i += PART_SIZE) parts.push(Array.from({ length: Math.min(PART_SIZE, n - i) }, (_, j) => i + j));
-  return { quiz: q, qarr: q.questions, parts, part: 0, queue: parts[0] ? parts[0].slice() : [], wrong: [], correct: new Set(), points: 0, qStart: Date.now(), menuOpen: false };
+  return { quiz: q, qarr: q.questions, parts, part: 0, queue: parts[0] ? parts[0].slice() : [], wrong: [], correct: new Set(), points: 0, qStart: Date.now(), menuOpen: false, summary: false, firstRight: new Set(), attempted: new Set() };
 }
 // Missed questions of a part are asked again after the rest of that part
 function advanceSession(){
   if (sess.queue.length) return;
   if (sess.wrong.length){ sess.queue = sess.wrong; sess.wrong = []; return; }
   sess.part++;
-  if (sess.part < sess.parts.length) sess.queue = sess.parts[sess.part].slice();
+  sess.summary = true;
 }
-function sessDone(){ return sess.part >= sess.parts.length && sess.queue.length === 0; }
+function sessDone(){ return !sess.summary && sess.part >= sess.parts.length && sess.queue.length === 0; }
+function drawPartSummary(run){
+  const total = quiz.questions.length, pct = Math.round(sess.correct.size / total * 100);
+  const last = sess.part >= sess.parts.length;
+  const partIdx = sess.parts[sess.part - 1] || [];
+  const firstRight = partIdx.filter(i => sess.firstRight.has(i)).length;
+  const top = el("div", "qtop");
+  const quit = el("button", "ghost", "Quit");
+  quit.onclick = () => { saveProgress(); sess = null; showTab("l"); };
+  top.append(quit, el("span", "score", sess.points + " pts"));
+  run.append(top);
+  const wrap = el("div", "result");
+  const ring = el("div", "ring"); ring.style.setProperty("--p", pct);
+  ring.append(el("b", "", pct + "%"), el("span", "", "known"));
+  wrap.append(
+    ring,
+    el("p", "qtext", "Part " + sess.part + " of " + sess.parts.length + " complete"),
+    el("p", "note", firstRight + " of " + partIdx.length + " right on the first try"),
+    el("p", "note", "You know " + pct + "% of this quiz so far.")
+  );
+  const btn = el("button", "", last ? "See results" : "Continue");
+  btn.onclick = () => {
+    sess.summary = false;
+    if (!last) sess.queue = sess.parts[sess.part].slice();
+    sess.qStart = Date.now();
+    drawQ();
+  };
+  wrap.append(btn);
+  run.append(wrap);
+  saveProgress();
+}
 function saveProgress(){
   if (!sess || !quiz || !quiz.savedId) return;
   const entry = saved.find(s => s.id === quiz.savedId); if (!entry) return;
@@ -709,6 +739,7 @@ function drawQ(){
   if (!quiz.questions.length){ run.append(el("p", "note", "No questions left in this quiz."), toolsRow(true)); return; }
   if (!sess || sess.qarr !== quiz.questions) sess = newSession(quiz);
   if (runErr) run.append(el("div", "feedback no", runErr));
+  if (sess.summary){ drawPartSummary(run); return; }
   if (sessDone()){ drawResult(run); return; }
 
   const total = quiz.questions.length;
@@ -757,6 +788,7 @@ function drawQ(){
   function check(val){
     if (answered) return; answered = true;
     const ok = t === "fill_blank" || t === "identification" || t === "solving" ? isRight(q, val) : val === q.answer;
+    if (!sess.attempted.has(idx)){ sess.attempted.add(idx); if (ok) sess.firstRight.add(idx); }
     let gained = 0;
     if (ok){
       if (!sess.correct.has(idx)){
