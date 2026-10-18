@@ -679,7 +679,28 @@ function nameBar(){
   return wrap;
 }
 
+let audioCtx = null;
+function tone(freq, start, dur, type, vol){
+  const t0 = audioCtx.currentTime + start;
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = type || "sine"; o.frequency.setValueAtTime(freq, t0);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol || 0.15, t0 + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start(t0); o.stop(t0 + dur + 0.02);
+}
+// Short two-note sounds: rising for correct, falling for wrong
+function sfx(ok){
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    if (ok){ tone(660, 0, 0.12, "sine", 0.15); tone(990, 0.1, 0.18, "sine", 0.15); }
+    else { tone(220, 0, 0.18, "triangle", 0.12); tone(165, 0.14, 0.24, "triangle", 0.12); }
+  } catch (e) {}
+}
 const PART_SIZE = 10;
+let quizEnter = null;
 let sess = null;
 function newSession(q){
   const n = q.questions.length, parts = [];
@@ -745,6 +766,7 @@ function drawQ(){
   const total = quiz.questions.length;
   const idx = sess.queue[0], q = quiz.questions[idx], t = q.kind || quiz.type;
   answered = false;
+  quizEnter = null;
 
   // Top bar: quit, type menu, points only
   const top = el("div", "qtop");
@@ -772,7 +794,9 @@ function drawQ(){
   top.append(scoreEl);
   run.append(top);
   const bar = el("div", "bar"), fill = el("div", "fill");
-  fill.style.width = Math.round(sess.correct.size / total * 100) + "%";
+  const curPart = sess.parts[sess.part] || [];
+  const partDone = curPart.filter(i => sess.correct.has(i)).length;
+  fill.style.width = Math.round(partDone / Math.max(1, curPart.length) * 100) + "%";
   bar.append(fill);
   run.append(bar);
 
@@ -799,6 +823,7 @@ function drawQ(){
       }
     } else if (!sess.wrong.includes(idx)) sess.wrong.push(idx);
     scoreEl.textContent = sess.points + " pts";
+    sfx(ok);
     fb.className = "feedback " + (ok ? "ok" : "no");
     fb.textContent = ok ? "Correct! +" + gained + " pts" : "Not quite. The answer is: " + ansText(q);
     if (q.why) why.textContent = q.why;
@@ -816,6 +841,7 @@ function drawQ(){
     const next = el("button", "", "Next");
     next.onclick = () => { sess.queue.shift(); advanceSession(); sess.qStart = Date.now(); drawQ(); };
     actions.append(next); next.focus();
+    quizEnter = () => next.click();
   }
 
   if (t === "multiple_choice"){
@@ -835,7 +861,7 @@ function drawQ(){
     input = document.createElement("input"); input.placeholder = "Type your answer"; input.setAttribute("aria-label", "Your answer");
     checkBtn = el("button", "", "Check answer"); checkBtn.type = "button";
     checkBtn.onclick = () => { if (input.value.trim()) check(input.value); };
-    input.addEventListener("keydown", e => { if (e.key === "Enter") checkBtn.click(); });
+    quizEnter = () => { if (input.value.trim()) checkBtn.click(); };
     row.append(input, checkBtn); area.append(row); input.focus();
   }
 }
@@ -1441,6 +1467,9 @@ function setNav(hidden){
 $("nav-hide").onclick = () => setNav(true);
 $("nav-show").onclick = () => setNav(false);
 try { setNav(localStorage.getItem("nav-hidden-v1") === "1"); } catch (e) {}
+document.addEventListener("keydown", e => {
+  if (e.key === "Enter" && curTab === "r" && quizEnter && e.target.tagName !== "BUTTON"){ e.preventDefault(); quizEnter(); }
+});
 initAuth();
 </script>
 
