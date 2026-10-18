@@ -745,12 +745,26 @@ function drawPartSummary(run){
   run.append(wrap);
   saveProgress();
 }
+function serializeSession(){
+  return { n: sess.qarr.length, part: sess.part, queue: sess.queue, wrong: sess.wrong, correct: [...sess.correct], firstRight: [...sess.firstRight], attempted: [...sess.attempted], points: sess.points, summary: sess.summary };
+}
 function saveProgress(){
   if (!sess || !quiz || !quiz.savedId) return;
   const entry = saved.find(s => s.id === quiz.savedId); if (!entry) return;
   const pct = Math.round(sess.correct.size / Math.max(1, quiz.questions.length) * 100);
   entry.progress = Math.max(entry.progress || 0, pct);
+  entry.resume = Object.assign({}, entry.resume || {}, { [quiz.type]: sessDone() ? null : serializeSession() });
   persist();
+}
+// Reopening a quiz continues from the saved place when there is one
+function restoreSession(){
+  const e = quiz.savedId ? saved.find(s => s.id === quiz.savedId) : null;
+  const r = e && e.resume && e.resume[quiz.type];
+  const s = newSession(quiz);
+  if (r && r.n === quiz.questions.length){
+    Object.assign(s, { part: r.part, queue: r.queue, wrong: r.wrong, correct: new Set(r.correct), firstRight: new Set(r.firstRight), attempted: new Set(r.attempted), points: r.points, summary: r.summary });
+  }
+  return s;
 }
 function drawQ(){
   const run = $("q-body"); run.replaceChildren();
@@ -758,7 +772,7 @@ function drawQ(){
   if (busy && curTab === "r"){ run.append(el("p", "note", progressText || "Writing new questions...")); return; }
   if (!quiz){ run.append(el("p", "note", "No quiz open. Create one, or start one from your library.")); return; }
   if (!quiz.questions.length){ run.append(el("p", "note", "No questions left in this quiz."), toolsRow(true)); return; }
-  if (!sess || sess.qarr !== quiz.questions) sess = newSession(quiz);
+  if (!sess || sess.qarr !== quiz.questions) sess = restoreSession();
   if (runErr) run.append(el("div", "feedback no", runErr));
   if (sess.summary){ drawPartSummary(run); return; }
   if (sessDone()){ drawResult(run); return; }
@@ -839,7 +853,7 @@ function drawQ(){
       actions.append(c);
     }
     const next = el("button", "", "Next");
-    next.onclick = () => { sess.queue.shift(); advanceSession(); sess.qStart = Date.now(); drawQ(); };
+    next.onclick = () => { sess.queue.shift(); advanceSession(); sess.qStart = Date.now(); saveProgress(); drawQ(); };
     actions.append(next); next.focus();
     quizEnter = () => next.click();
   }
@@ -1338,7 +1352,7 @@ async function pushAll(){
   try {
     const uid = currentUserId;
     const aRows = items.map(a => ({ id: String(a.id), user_id: uid, course: a.course, title: a.title || "", due: a.due, done: !!a.done }));
-    const qRows = saved.map(s => ({ id: String(s.id), user_id: uid, name: s.name, type: s.type, mode: s.mode || "general", source: s.source || "", custom: !!s.custom, questions: s.questions || [], progress: s.progress || 0, pool: s.pool || {} }));
+    const qRows = saved.map(s => ({ id: String(s.id), user_id: uid, name: s.name, type: s.type, mode: s.mode || "general", source: s.source || "", custom: !!s.custom, questions: s.questions || [], progress: s.progress || 0, pool: s.pool || {}, resume: s.resume || {} }));
     if (aRows.length){ const { error } = await sb.from("assignments").upsert(aRows, { onConflict: "user_id,id" }); if (error) throw error; }
     if (qRows.length){ const { error } = await sb.from("quizzes").upsert(qRows, { onConflict: "user_id,id" }); if (error) throw error; }
     await pruneTable("assignments", items.map(a => String(a.id)));
@@ -1356,7 +1370,7 @@ async function pullAndMerge(){
   if (a.error) throw a.error;
   if (q.error) throw q.error;
   const serverA = a.data.map(r => ({ id: Number(r.id), course: r.course, title: r.title || "", due: r.due, done: !!r.done }));
-  const serverQ = q.data.map(r => ({ id: Number(r.id), name: r.name, type: r.type, mode: r.mode || "general", source: r.source || "", custom: !!r.custom, questions: r.questions || [], progress: r.progress || 0, pool: r.pool || {} }));
+  const serverQ = q.data.map(r => ({ id: Number(r.id), name: r.name, type: r.type, mode: r.mode || "general", source: r.source || "", custom: !!r.custom, questions: r.questions || [], progress: r.progress || 0, pool: r.pool || {}, resume: r.resume || {} }));
   const aIds = new Set(serverA.map(x => String(x.id)));
   const qIds = new Set(serverQ.map(x => String(x.id)));
   items = serverA.concat(items.filter(x => !aIds.has(String(x.id))));
