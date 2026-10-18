@@ -230,6 +230,9 @@ html.nav-hidden main{padding-bottom:70px}
 .qtop .score{margin-left:auto;font-weight:700}
 .typemenu{position:relative}
 .typepanel{position:absolute;top:100%;left:0;z-index:30;margin-top:6px;background:var(--surface);border:2px solid var(--line);border-radius:14px;padding:8px;display:grid;gap:6px;min-width:200px;box-shadow:4px 4px 0 var(--line)}
+.pill{display:inline-block;font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:999px;border:2px solid var(--line);background:var(--pop);color:var(--on);margin-left:8px;vertical-align:middle}
+.linkbox{display:flex;gap:8px;flex-wrap:wrap}
+.linkbox input{flex:1 1 200px;min-width:0}
 </style>
 </head>
 <body>
@@ -243,7 +246,7 @@ html.nav-hidden main{padding-bottom:70px}
   <nav class="tabs">
     <button id="nav-hide" class="ghost" type="button" aria-expanded="true" aria-controls="nav-panel">Hide menu</button>
     <div class="search-wrap"><svg class="search-ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input id="nav-search" type="search" placeholder="Search quizzes" aria-label="Search quizzes"></div><button type="button" id="t-a" aria-pressed="true">Assignments</button><button type="button" id="t-q" aria-pressed="false">New quiz</button>
-    <button type="button" id="t-l" aria-pressed="false">Library</button><button type="button" id="t-r" aria-pressed="false" hidden>Quiz</button>
+    <button type="button" id="t-l" aria-pressed="false">Library</button><button type="button" id="t-pub" aria-pressed="false">Public</button><button type="button" id="t-r" aria-pressed="false" hidden>Quiz</button>
     <div class="navrow"><button type="button" id="t-p" aria-pressed="false"><span class="avatar"><img id="nav-avatar" alt="" hidden></span><span>Profile</span></button>
       <button id="signout" class="icon-btn" type="button" hidden aria-label="Sign out" title="Sign out"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#E0444E" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 3v8"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/></svg></button></div></nav>
   <div id="tab-a">
@@ -278,6 +281,10 @@ html.nav-hidden main{padding-bottom:70px}
     <p class="sub">Your saved quizzes. Start one to replay the same questions.</p>
     <div id="q-saved"></div>
   </div>
+  <div id="tab-pub" hidden>
+    <p class="sub">Quizzes shared by everyone. Play one, or save a copy to your library.</p>
+    <div id="pub-list"></div>
+  </div>
   <div id="tab-p" hidden>
     <div class="card" style="padding:18px;display:grid;gap:12px">
       <div class="course">Your profile</div>
@@ -291,7 +298,7 @@ html.nav-hidden main{padding-bottom:70px}
   </div>
   <div id="tab-r" hidden>
     <div class="types" id="q-types-run" role="group" aria-label="Quiz type"></div>
-    <p class="note">Changing the type rebuilds this quiz from the same file and updates it in your library. Nothing new is added.</p>
+    <p class="note" id="run-note">Changing the type rebuilds this quiz from the same file and updates it in your library. Nothing new is added.</p>
     <div id="q-body" class="card"></div>
   </div>
 </main>
@@ -389,14 +396,16 @@ document.getElementById("f").addEventListener("submit", e => {
 });
 const $ = id => document.getElementById(id);
 let curTab = "a";
+const TABS = ["a","q","l","pub","r","p"];
 function showTab(n){
   curTab = n;
-  for (const k of ["a","q","l","r","p"]){ $("tab-" + k).hidden = k !== n; $("t-" + k).setAttribute("aria-pressed", k === n); }
+  for (const k of TABS){ $("tab-" + k).hidden = k !== n; $("t-" + k).setAttribute("aria-pressed", k === n); }
   if (n === "l") drawSaved();
   if (n === "r") drawQ();
   if (n === "p") fillProfile();
+  if (n === "pub") openPublicTab();
 }
-for (const k of ["a","q","l","r","p"]) $("t-" + k).onclick = () => showTab(k);
+for (const k of TABS) $("t-" + k).onclick = () => showTab(k);
 
 const TYPES = { identification: "Identification", multiple_choice: "Multiple choice", true_false: "True or false", fill_blank: "Fill in the blank", solving: "Solving", mixed: "Mixed", reviewer: "Reviewer" };
 const SHAPES = {
@@ -711,7 +720,7 @@ function drawPartSummary(run){
   const firstRight = partIdx.filter(i => sess.firstRight.has(i)).length;
   const top = el("div", "qtop");
   const quit = el("button", "ghost", "Quit");
-  quit.onclick = () => { saveProgress(); sess = null; showTab("l"); };
+  quit.onclick = leaveQuiz;
   top.append(quit, el("span", "score", sess.points + " pts"));
   run.append(top);
   const wrap = el("div", "result");
@@ -758,11 +767,20 @@ function restoreSession(){
 function drawQ(){
   const run = $("q-body"); run.replaceChildren();
   $("t-r").hidden = !quiz;
+  curView = "";
+  { const ro = !!(quiz && quiz.readonly); $("q-types-run").hidden = ro; $("run-note").hidden = ro; }
   if (busy && curTab === "r"){ run.append(el("p", "note", progressText || "Writing new questions...")); return; }
   if (!quiz){ run.append(el("p", "note", "No quiz open. Create one, or start one from your library.")); return; }
-  if (!quiz.questions.length){ run.append(el("p", "note", "No questions left in this quiz."), toolsRow(true)); return; }
+  if (!quiz.questions.length){ run.append(el("p", "note", "No questions left in this quiz.")); if (!quiz.readonly) run.append(toolsRow(true)); return; }
   if (!sess || sess.qarr !== quiz.questions) sess = restoreSession();
   if (runErr) run.append(el("div", "feedback no", runErr));
+  if (quiz.readonly){
+    const ban = el("div", "row"); ban.style.alignItems = "center";
+    ban.append(el("span", "note", "Public quiz by " + (quiz.author || "Anonymous") + ". Your progress isn't saved."));
+    const sv = el("button", "ghost", "Save to my library"); sv.type = "button"; sv.onclick = saveOpenCopy;
+    ban.append(sv); run.append(ban);
+  }
+  if (runNote) run.append(el("div", "note", runNote));
   if (sess.summary){ drawPartSummary(run); return; }
   if (sessDone()){ drawResult(run); return; }
 
@@ -774,9 +792,9 @@ function drawQ(){
   // Top bar: quit, type menu, points only
   const top = el("div", "qtop");
   const quit = el("button", "ghost", "Quit");
-  quit.onclick = () => { saveProgress(); sess = null; showTab("l"); };
+  quit.onclick = leaveQuiz;
   top.append(quit);
-  {
+  if (!quiz.readonly){
     const mw = el("div", "typemenu");
     const tb = el("button", "ghost", "Type");
     tb.setAttribute("aria-expanded", String(!!sess.menuOpen));
@@ -902,10 +920,11 @@ function blankQ(t){
   if (t === "true_false") return { q: "", answer: true, why: "" };
   return { q: "", answer: "", alt: [], why: "" };
 }
-let editReturn = null;
+let editReturn = null, curView = "", shareMsg = "", runNote = "";
 function finishEdit(){ const f = editReturn || drawQ; editReturn = null; f(); }
 function labelled(text, control){ const l = el("label", "", text); l.append(control); return l; }
 function editorFor(index, kindOverride){
+  curView = "";
   const isNew = index >= quiz.questions.length;
   const t = kindOverride || (isNew ? (quiz.type === "mixed" ? "multiple_choice" : quiz.type) : (quiz.questions[index].kind || quiz.type));
   const q0 = isNew ? blankQ(t) : quiz.questions[index];
@@ -980,8 +999,10 @@ function editorFor(index, kindOverride){
 function drawQuestionList(){
   const run = $("q-body"); run.replaceChildren();
   $("t-r").hidden = !quiz;
+  curView = "list";
   if (!quiz){ run.append(el("p", "note", "No quiz open.")); return; }
   run.append(nameBar());
+  { const sc = sharingCard(); if (sc) run.append(sc); }
   run.append(el("div", "course", "All questions (" + quiz.questions.length + ")"));
   quiz.questions.forEach((q, i) => {
     const card = el("div", "miss"), r = el("div", "row"), info = el("div");
@@ -1021,7 +1042,7 @@ function drawResult(run){
   run.append(wrap);
   const row = el("div", "row");
   const again = el("button", "", "Retake"); again.onclick = () => { sess = newSession(quiz); drawQ(); };
-  const lib = el("button", "ghost", "Library"); lib.onclick = () => { sess = null; showTab("l"); };
+  const lib = el("button", "ghost", quiz.readonly ? "Public quizzes" : "Library"); lib.onclick = () => { sess = null; showTab(quiz.readonly ? "pub" : "l"); };
   row.append(again, lib); run.append(row);
 }
 
@@ -1045,7 +1066,8 @@ function drawSaved(){
   const card = el("div", "card");
   for (const s of [...list].reverse()){
     const row = el("div", "row"), info = el("div"); info.style.flex = "1 1 160px";
-    info.append(el("div", "course", s.name), el("div", "note", TYPES[s.type] + ", " + s.questions.length + (s.type === "reviewer" ? " sections" : " questions")));
+    const nm = el("div", "course", s.name); if (s.isPublic) nm.append(el("span", "pill", "Public"));
+    info.append(nm, el("div", "note", TYPES[s.type] + ", " + s.questions.length + (s.type === "reviewer" ? " sections" : " questions")));
     if (s.type !== "reviewer"){
       const pb = el("div", "bar"), pf = el("div", "fill"); pb.style.margin = "6px 0"; pf.style.width = (s.progress || 0) + "%";
       pb.append(pf); info.append(el("div", "note", "Progress: " + (s.progress || 0) + "%"), pb);
@@ -1055,7 +1077,7 @@ function drawSaved(){
     ed.onclick = () => { openSaved(s.id); drawQuestionList(); };
     if (s.type === "reviewer") ed.hidden = true;
     del.onclick = () => {
-      if (confirm("Delete this quiz from your library?")){
+      if (confirm(s.isPublic ? "Delete this quiz? It is public, so it will also disappear from the Public tab and its share link will stop working." : "Delete this quiz from your library?")){
         saved = saved.filter(x => x.id !== s.id); persist();
         if (quiz && quiz.savedId === s.id){ quiz = null; runErr = ""; $("t-r").hidden = true; if (curTab === "r") showTab("l"); }
         drawSaved();
@@ -1070,7 +1092,7 @@ function openSaved(id){
   qType = s.type; drawTypes();
   if (!s.pool) s.pool = { [s.type]: s.questions };
   quiz = { type: s.type, questions: s.questions, source: s.source, name: s.name, savedId: s.id, pool: s.pool };
-  qi = 0; score = 0; missed = []; answered = false; runErr = ""; busy = false; token++; $("q-start").disabled = false;
+  qi = 0; score = 0; missed = []; answered = false; runErr = ""; runNote = ""; busy = false; token++; $("q-start").disabled = false;
   showTab("r");
 }
 
@@ -1174,9 +1196,245 @@ if ($("mode")) $("mode").onchange = () => {
   applyMode();
 };
 applyMode();
-$("nav-search").oninput = () => { if ($("nav-search").value.trim()) showTab("l"); else drawSaved(); };
+$("nav-search").oninput = () => { if (curTab === "pub"){ drawPublic(); return; } if ($("nav-search").value.trim()) showTab("l"); else drawSaved(); };
 drawTypes();
 drawQ();
+
+/* ---- Sharing and public quizzes ---- */
+function makeShareId(){
+  const a = new Uint8Array(10);
+  crypto.getRandomValues(a);
+  return Array.from(a, b => "abcdefghijkmnpqrstuvwxyz23456789"[b % 32]).join("");
+}
+function shareLink(s){ return location.href.split(/[?#]/)[0] + "?quiz=" + encodeURIComponent(s.shareId); }
+function leaveQuiz(){
+  saveProgress();
+  const ro = !!(quiz && quiz.readonly);
+  sess = null;
+  showTab(ro ? "pub" : "l");
+}
+
+// Edit screen: Private / Public switch and the shareable link
+function sharingCard(){
+  const entry = quiz && quiz.savedId ? saved.find(s => s.id === quiz.savedId) : null;
+  if (!entry || entry.type === "reviewer") return null;
+  const card = el("div", "card");
+  card.style.cssText = "margin:12px 0;display:grid;gap:10px";
+  card.append(el("div", "course", "Who can use this quiz?"));
+  const seg = el("div", "types"); seg.setAttribute("role", "group"); seg.setAttribute("aria-label", "Quiz visibility");
+  [[false, "Private"], [true, "Public"]].forEach(([v, label]) => {
+    const b = el("button", "", label); b.type = "button";
+    b.setAttribute("aria-pressed", String(!!entry.isPublic === v));
+    b.onclick = () => { if (!!entry.isPublic !== v) setVisibility(entry, v); };
+    seg.append(b);
+  });
+  card.append(seg);
+  card.append(el("p", "note", entry.isPublic
+    ? "Anyone signed in to SupStudy can find this quiz in the Public tab and play it." + (entry.source ? " The notes it was made from are shared too." : "")
+    : "Only you can see and play this quiz."));
+  if (entry.isPublic && entry.shareId){
+    const link = shareLink(entry);
+    const box = el("div", "linkbox");
+    const inp = document.createElement("input"); inp.type = "text"; inp.readOnly = true; inp.value = link;
+    inp.setAttribute("aria-label", "Shareable link");
+    inp.onfocus = () => inp.select();
+    const cp = el("button", "", "Copy link"); cp.type = "button";
+    cp.onclick = async () => {
+      let ok = false;
+      try { await navigator.clipboard.writeText(link); ok = true; } catch (e) {}
+      if (!ok){ try { inp.focus(); inp.select(); ok = document.execCommand("copy"); } catch (e) {} }
+      cp.textContent = ok ? "Copied!" : "Select the link to copy it";
+      setTimeout(() => { cp.textContent = "Copy link"; }, 2000);
+    };
+    box.append(inp, cp);
+    if (navigator.share){
+      const sh = el("button", "ghost", "Share"); sh.type = "button";
+      sh.onclick = () => { navigator.share({ title: entry.name, text: "Try this quiz on SupStudy", url: link }).catch(() => {}); };
+      box.append(sh);
+    }
+    card.append(box, el("p", "note", "People need to be signed in to SupStudy to open the link."));
+  }
+  const msg = el("div", "note"); msg.setAttribute("role", "status"); msg.textContent = shareMsg;
+  card.append(msg);
+  return card;
+}
+async function setVisibility(entry, pub){
+  shareMsg = "";
+  if (pub){
+    if (!entry.questions.length){ shareMsg = "Add at least one question before making this quiz public."; drawQuestionList(); return; }
+    if (!sb || !syncReady || !currentUserId){ shareMsg = "Couldn't make it public yet because your account isn't synced. Check your connection and try again."; drawQuestionList(); return; }
+  }
+  const prev = { isPublic: !!entry.isPublic, shareId: entry.shareId, authorName: entry.authorName };
+  entry.isPublic = pub;
+  if (pub){ entry.shareId = entry.shareId || makeShareId(); entry.authorName = displayName || "Anonymous"; }
+  shareMsg = "Saving...";
+  persist(); clearTimeout(syncTimer);
+  drawQuestionList();
+  const ok = await pushAll();
+  if (ok) shareMsg = pub ? "Your quiz is public. Anyone signed in can open the link." : "Your quiz is private again. Its link no longer works.";
+  else { Object.assign(entry, prev); persist(); shareMsg = "Couldn't update sharing. Check your connection and try again."; }
+  if (curView === "list" && curTab === "r" && quiz && quiz.savedId === entry.id) drawQuestionList();
+}
+
+// Public quizzes come from other people, so rebuild each question from known fields only
+function cleanQuestions(raw, type){
+  if (!Array.isArray(raw)) return [];
+  const s = v => String(v == null ? "" : v).slice(0, 2000);
+  const out = [];
+  for (const r of raw.slice(0, 500)){
+    if (!r || typeof r !== "object") continue;
+    const t = r.kind && TYPES[r.kind] && r.kind !== "mixed" ? r.kind : type;
+    if (t === "mixed" || t === "reviewer") continue;
+    const q = { q: s(r.q), why: s(r.why) };
+    if (r.kind && TYPES[r.kind] && r.kind !== "mixed") q.kind = r.kind;
+    if (t === "multiple_choice"){
+      if (!Array.isArray(r.options)) continue;
+      q.options = r.options.slice(0, 10).map(s); q.answer = r.answer;
+    } else if (t === "true_false"){
+      q.answer = r.answer;
+    } else {
+      q.answer = s(r.answer);
+      q.alt = Array.isArray(r.alt) ? r.alt.slice(0, 10).map(s) : [];
+    }
+    if (q.q.trim() && valid(q, t)) out.push(q);
+  }
+  return out;
+}
+async function fetchPublic(match){
+  let req = sb.from("quizzes").select("id,user_id,name,type,questions,author_name").eq("is_public", true);
+  for (const [k, v] of Object.entries(match)) req = req.eq(k, v);
+  const { data, error } = await req.maybeSingle();
+  if (error) throw error;
+  if (!data || !TYPES[data.type] || data.type === "reviewer") throw new Error("This quiz isn't available. It may be private or deleted.");
+  const questions = cleanQuestions(data.questions, data.type);
+  if (!questions.length) throw new Error("This quiz has no questions to play.");
+  return Object.assign({}, data, { questions });
+}
+function playPublic(full){
+  qType = full.type; drawTypes();
+  quiz = { type: full.type, questions: full.questions, source: "", name: full.name, savedId: null, pool: { [full.type]: full.questions }, readonly: true, author: full.author_name || "" };
+  qi = 0; score = 0; missed = []; answered = false; runErr = ""; runNote = ""; busy = false; token++; sess = null;
+  showTab("r");
+}
+function addCopyToLibrary(name, type, questions){
+  const ne = { id: Date.now(), name: uniqueName(name, type), type, questions, source: "", mode: studyMode, custom: true, pool: { [type]: questions }, progress: 0, resume: {}, isPublic: false, shareId: "", authorName: "" };
+  saved.push(ne);
+  if (!persist()){ saved.pop(); return null; }
+  return ne;
+}
+// Save the public quiz that is open right now, and keep the session going
+function saveOpenCopy(){
+  if (!quiz || !quiz.readonly) return;
+  const ne = addCopyToLibrary(quiz.name, quiz.type, quiz.questions);
+  if (!ne){ runErr = "Couldn't save to your library: browser storage is full."; drawQ(); return; }
+  quiz.savedId = ne.id; quiz.readonly = false; quiz.custom = true; quiz.name = ne.name; quiz.pool = ne.pool;
+  runErr = ""; runNote = "Saved to your library. Your progress is saved from here on.";
+  drawQ();
+}
+
+// Public tab
+let pubRows = [], pubLoading = false, pubMore = false, pubErr = "";
+const PUB_PAGE = 30;
+async function loadPublic(reset){
+  if (!sb || !currentUserId || pubLoading) return;
+  pubLoading = true; pubErr = "";
+  drawPublic();
+  try {
+    const from = reset ? 0 : pubRows.length;
+    const { data, error } = await sb.from("quizzes")
+      .select("id,user_id,name,type,author_name,created_at")
+      .eq("is_public", true).neq("type", "reviewer")
+      .order("created_at", { ascending: false })
+      .range(from, from + PUB_PAGE - 1);
+    if (error) throw error;
+    const rows = data.filter(r => TYPES[r.type]);
+    if (reset) pubRows = rows;
+    else { const have = new Set(pubRows.map(r => r.user_id + ":" + r.id)); pubRows = pubRows.concat(rows.filter(r => !have.has(r.user_id + ":" + r.id))); }
+    pubMore = data.length === PUB_PAGE;
+  } catch (e){ pubErr = "Couldn't load public quizzes: " + (e.message || "error"); }
+  pubLoading = false;
+  if (curTab === "pub") drawPublic();
+}
+function openPublicTab(){ drawPublic(); loadPublic(true); }
+function drawPublic(){
+  const box = $("pub-list"); box.replaceChildren();
+  const top = el("div", "row");
+  const rf = el("button", "ghost", pubLoading ? "Loading..." : "Refresh"); rf.type = "button"; rf.disabled = pubLoading;
+  rf.onclick = () => loadPublic(true);
+  top.append(rf); box.append(top);
+  if (pubErr) box.append(el("div", "feedback no", pubErr));
+  const term = (($("nav-search") && $("nav-search").value) || "").trim().toLowerCase();
+  const list = pubRows.filter(r => !term || (r.name || "").toLowerCase().includes(term) || (r.author_name || "").toLowerCase().includes(term));
+  if (!list.length){
+    if (pubLoading) box.append(el("p", "note", "Loading public quizzes..."));
+    else box.append(el("p", "empty", term ? "No public quizzes match \u201c" + term + "\u201d." : "No public quizzes yet. Open one of your quizzes, tap Edit, and set it to Public."));
+    return;
+  }
+  const card = el("div", "card");
+  for (const r of list){
+    const mine = r.user_id === currentUserId;
+    const row = el("div", "row"), info = el("div"); info.style.flex = "1 1 160px";
+    info.append(el("div", "course", r.name), el("div", "note", TYPES[r.type] + " \u00b7 by " + (mine ? "you" : (r.author_name || "Anonymous"))));
+    const own = mine ? saved.find(s => String(s.id) === String(r.id)) : null;
+    const go = el("button", "", own ? "Open" : "Play"); go.type = "button";
+    go.onclick = own ? () => openSaved(own.id) : () => playPublicRow(r, go);
+    row.append(info, go);
+    if (!mine){
+      const cp = el("button", "ghost", "Save copy"); cp.type = "button";
+      cp.onclick = () => copyPublicRow(r, cp);
+      row.append(cp);
+    }
+    card.append(row);
+  }
+  box.append(card);
+  if (pubMore){
+    const more = el("button", "ghost", "Load more"); more.type = "button"; more.disabled = pubLoading;
+    more.onclick = () => loadPublic(false);
+    box.append(more);
+  }
+}
+async function playPublicRow(r, btn){
+  const old = btn.textContent; btn.disabled = true; btn.textContent = "Loading...";
+  try { playPublic(await fetchPublic({ id: r.id, user_id: r.user_id })); }
+  catch (e){ btn.disabled = false; btn.textContent = old; pubErr = "Couldn't open that quiz: " + (e.message || "error"); drawPublic(); }
+}
+async function copyPublicRow(r, btn){
+  const old = btn.textContent; btn.disabled = true; btn.textContent = "Saving...";
+  try {
+    const full = await fetchPublic({ id: r.id, user_id: r.user_id });
+    const ne = addCopyToLibrary(full.name, full.type, full.questions);
+    if (!ne) throw new Error("browser storage is full");
+    btn.textContent = "Saved to library";
+  } catch (e){ btn.disabled = false; btn.textContent = old; pubErr = "Couldn't save that quiz: " + (e.message || "error"); drawPublic(); }
+}
+
+// Share link: ?quiz=<id>. Remembered across the sign-in redirect.
+let pendingShareId = null;
+try {
+  const p = new URLSearchParams(location.search).get("quiz");
+  if (p && /^[a-z0-9]{6,32}$/i.test(p)){
+    pendingShareId = p;
+    localStorage.setItem("pending-share-v1", JSON.stringify({ id: p, t: Date.now() }));
+  } else {
+    const raw = JSON.parse(localStorage.getItem("pending-share-v1") || "null");
+    if (raw && /^[a-z0-9]{6,32}$/i.test(String(raw.id)) && Date.now() - raw.t < 3600000) pendingShareId = raw.id;
+    else localStorage.removeItem("pending-share-v1");
+  }
+} catch (e) {}
+async function openPendingShare(){
+  if (!pendingShareId || !sb || !currentUserId) return;
+  const id = pendingShareId; pendingShareId = null;
+  try { localStorage.removeItem("pending-share-v1"); } catch (e) {}
+  try { history.replaceState(null, "", location.href.split(/[?#]/)[0]); } catch (e) {}
+  try {
+    const full = await fetchPublic({ share_id: id });
+    const mine = full.user_id === currentUserId ? saved.find(s => String(s.id) === String(full.id)) : null;
+    if (mine) openSaved(mine.id); else playPublic(full);
+  } catch (e){
+    authMsg(/isn't available/.test(e.message || "") ? e.message : "Couldn't open the shared quiz: " + (e.message || "error"));
+    showTab("pub");
+  }
+}
 
 /* ---- Accounts and cloud sync (Supabase) ---- */
 const SB_URL = "https://oziwceozhehkuitbuqpu.supabase.co";
@@ -1208,17 +1466,18 @@ async function pruneTable(table, keepIds){
   }
 }
 async function pushAll(){
-  if (!sb || !syncReady || !currentUserId) return;
+  if (!sb || !syncReady || !currentUserId) return false;
   try {
     const uid = currentUserId;
     const aRows = items.map(a => ({ id: String(a.id), user_id: uid, course: a.course, title: a.title || "", due: a.due, done: !!a.done }));
-    const qRows = saved.map(s => ({ id: String(s.id), user_id: uid, name: s.name, type: s.type, mode: s.mode || "general", source: s.source || "", custom: !!s.custom, questions: s.questions || [], progress: s.progress || 0, pool: s.pool || {}, resume: s.resume || {} }));
+    const qRows = saved.map(s => ({ id: String(s.id), user_id: uid, name: s.name, type: s.type, mode: s.mode || "general", source: s.source || "", custom: !!s.custom, questions: s.questions || [], progress: s.progress || 0, pool: s.pool || {}, resume: s.resume || {}, is_public: !!s.isPublic, share_id: s.shareId || null, author_name: s.isPublic ? (displayName || s.authorName || "Anonymous") : (s.authorName || "") }));
     if (aRows.length){ const { error } = await sb.from("assignments").upsert(aRows, { onConflict: "user_id,id" }); if (error) throw error; }
     if (qRows.length){ const { error } = await sb.from("quizzes").upsert(qRows, { onConflict: "user_id,id" }); if (error) throw error; }
     await pruneTable("assignments", items.map(a => String(a.id)));
     await pruneTable("quizzes", saved.map(s => String(s.id)));
     authMsg("Saved to your account.");
-  } catch (e) { authMsg("Couldn't sync: " + (e.message || "error") + ". Your data is still saved on this device."); }
+    return true;
+  } catch (e) { authMsg("Couldn't sync: " + (e.message || "error") + ". Your data is still saved on this device."); return false; }
 }
 // On sign-in: download the account's data and add anything only this device has, then upload it
 async function pullAndMerge(){
@@ -1230,7 +1489,7 @@ async function pullAndMerge(){
   if (a.error) throw a.error;
   if (q.error) throw q.error;
   const serverA = a.data.map(r => ({ id: Number(r.id), course: r.course, title: r.title || "", due: r.due, done: !!r.done }));
-  const serverQ = q.data.map(r => ({ id: Number(r.id), name: r.name, type: r.type, mode: r.mode || "general", source: r.source || "", custom: !!r.custom, questions: r.questions || [], progress: r.progress || 0, pool: r.pool || {}, resume: r.resume || {} }));
+  const serverQ = q.data.map(r => ({ id: Number(r.id), name: r.name, type: r.type, mode: r.mode || "general", source: r.source || "", custom: !!r.custom, questions: r.questions || [], progress: r.progress || 0, pool: r.pool || {}, resume: r.resume || {}, isPublic: !!r.is_public, shareId: r.share_id || "", authorName: r.author_name || "" }));
   const aIds = new Set(serverA.map(x => String(x.id)));
   const qIds = new Set(serverQ.map(x => String(x.id)));
   items = serverA.concat(items.filter(x => !aIds.has(String(x.id))));
@@ -1287,6 +1546,7 @@ async function onSession(session){
   authMsg("Syncing...");
   try { await pullAndMerge(); }
   catch (e){ syncReady = false; authMsg("Couldn't sync: " + (e.message || "error") + ". Your data is still saved on this device."); }
+  openPendingShare();
 }
 async function initAuth(){
   try { await loadSupabase(); sb = window.supabase.createClient(SB_URL, SB_KEY); }
