@@ -225,6 +225,11 @@ html.nav-hidden main{padding-bottom:70px}
 .qcard ul{display:block;margin:6px 0 0;padding-left:22px}
 .qcard li{display:list-item;grid-template-columns:none;background:none;border:none;box-shadow:none;border-radius:0;padding:2px 0;position:static;margin:0}
 .qcard li::before{display:none}
+
+.qtop{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px}
+.qtop .score{margin-left:auto;font-weight:700}
+.typemenu{position:relative}
+.typepanel{position:absolute;top:100%;left:0;z-index:30;margin-top:6px;background:var(--surface);border:2px solid var(--line);border-radius:14px;padding:8px;display:grid;gap:6px;min-width:200px;box-shadow:4px 4px 0 var(--line)}
 </style>
 </head>
 <body>
@@ -593,17 +598,44 @@ async function buildQuestions(sample, text, type, my){
   return all;
 }
 
+function customSourceText(){
+  return quiz.questions.map((q, i) => {
+    const k = q.kind || quiz.type;
+    const ans = k === "multiple_choice" ? (q.options || [])[q.answer] : k === "true_false" ? (q.answer ? "True" : "False") : q.answer;
+    return (i + 1) + ". " + q.q + " Answer: " + ans + (q.why ? " (" + q.why + ")" : "");
+  }).join("\n");
+}
+function poolOf(q){
+  const e = q.savedId ? saved.find(s => s.id === q.savedId) : null;
+  return (e && e.pool) || q.pool || {};
+}
+function storePool(q, type, qs){
+  q.pool = Object.assign({}, q.pool || {}, { [type]: qs });
+  const e = q.savedId ? saved.find(s => s.id === q.savedId) : null;
+  if (e) e.pool = Object.assign({}, e.pool || {}, { [type]: qs });
+}
 async function startQuiz(){
   const fromRun = curTab === "r" && !!quiz;
   if (fromRun) exitPractice();
   const fail = m => { if (fromRun){ runErr = m; drawQ(); } else qmsg(m); };
-  const text = fromRun ? (quiz.source || "") : $("q-text").value.trim();
-  if (text.length < 200){ fail("Add a longer file or paste a few paragraphs first."); return; }
+  const ownText = fromRun && quiz.custom && !quiz.source ? customSourceText() : "";
+  const text = fromRun ? (quiz.source || ownText) : $("q-text").value.trim();
+  if (text.length < (fromRun && ownText ? 20 : 200)){ fail("Add a longer file or paste a few paragraphs first."); return; }
   const sample = await getSampler();
   if (!sample){ fail("Quiz creation isn't available right now. If you run this page yourself, make sure the quiz server is running."); return; }
   const my = ++token, type = qType;
   const base = fromRun ? quiz.name : (quizName || "Untitled quiz");
   const entry = fromRun && quiz.savedId ? saved.find(s => s.id === quiz.savedId) : null;
+  if (fromRun){
+    const cached = poolOf(quiz)[type];
+    if (cached && cached.length){
+      quiz.type = type; quiz.questions = cached; quiz.pool = Object.assign({}, quiz.pool || {}, { [type]: cached });
+      if (entry){ entry.type = type; entry.questions = cached; persist(); }
+      sess = null; qi = 0; score = 0; missed = []; answered = false; runErr = ""; qmsg("");
+      showTab("r");
+      return;
+    }
+  }
   busy = true; runErr = ""; progressText = "Reading all of your text..."; $("q-start").disabled = true;
   if (fromRun) drawQ(); else qmsg(progressText);
   try {
@@ -613,11 +645,12 @@ async function startQuiz(){
     let warn = "";
     if (fromRun){
       quiz.type = type; quiz.questions = qs;
+      storePool(quiz, type, qs);
       if (entry){ entry.type = type; entry.questions = qs; }
     } else {
-      const ne = { id: Date.now(), name: uniqueName(base, type), type, questions: qs, source: text, mode: studyMode };
+      const ne = { id: Date.now(), name: uniqueName(base, type), type, questions: qs, source: text, mode: studyMode, pool: { [type]: qs } };
       saved.push(ne);
-      quiz = { type, questions: qs, source: text, name: ne.name, savedId: ne.id };
+      quiz = { type, questions: qs, source: text, name: ne.name, savedId: ne.id, pool: { [type]: qs } };
     }
     if (!persist()){
       warn = "Couldn't save to your library: browser storage is full. Delete a saved quiz to free space.";
@@ -646,27 +679,71 @@ function nameBar(){
   return wrap;
 }
 
+const PART_SIZE = 5;
+let sess = null;
+function newSession(q){
+  const n = q.questions.length, parts = [];
+  for (let i = 0; i < n; i += PART_SIZE) parts.push(Array.from({ length: Math.min(PART_SIZE, n - i) }, (_, j) => i + j));
+  return { quiz: q, qarr: q.questions, parts, part: 0, queue: parts[0] ? parts[0].slice() : [], wrong: [], correct: new Set(), points: 0, qStart: Date.now(), menuOpen: false };
+}
+// Missed questions of a part are asked again after the rest of that part
+function advanceSession(){
+  if (sess.queue.length) return;
+  if (sess.wrong.length){ sess.queue = sess.wrong; sess.wrong = []; return; }
+  sess.part++;
+  if (sess.part < sess.parts.length) sess.queue = sess.parts[sess.part].slice();
+}
+function sessDone(){ return sess.part >= sess.parts.length && sess.queue.length === 0; }
+function saveProgress(){
+  if (!sess || !quiz || !quiz.savedId) return;
+  const entry = saved.find(s => s.id === quiz.savedId); if (!entry) return;
+  const pct = Math.round(sess.correct.size / Math.max(1, quiz.questions.length) * 100);
+  entry.progress = Math.max(entry.progress || 0, pct);
+  persist();
+}
 function drawQ(){
   const run = $("q-body"); run.replaceChildren();
   $("t-r").hidden = !quiz;
   if (busy && curTab === "r"){ run.append(el("p", "note", progressText || "Writing new questions...")); return; }
   if (!quiz){ run.append(el("p", "note", "No quiz open. Create one, or start one from your library.")); return; }
-  run.append(nameBar());
-  if (runErr) run.append(el("div", "feedback no", runErr));
   if (!quiz.questions.length){ run.append(el("p", "note", "No questions left in this quiz."), toolsRow(true)); return; }
-  if (qi >= quiz.questions.length){ drawResult(run); return; }
+  if (!sess || sess.qarr !== quiz.questions) sess = newSession(quiz);
+  if (runErr) run.append(el("div", "feedback no", runErr));
+  if (sessDone()){ drawResult(run); return; }
 
   const total = quiz.questions.length;
-  const q = quiz.questions[qi], t = q.kind || quiz.type;
+  const idx = sess.queue[0], q = quiz.questions[idx], t = q.kind || quiz.type;
   answered = false;
 
-  const top = el("div", "study-top");
-  top.append(el("span", "", (qi + 1) + " of " + total), el("span", "", "Score " + score));
+  // Top bar: quit, type menu, points only
+  const top = el("div", "qtop");
+  const quit = el("button", "ghost", "Quit");
+  quit.onclick = () => { saveProgress(); sess = null; showTab("l"); };
+  top.append(quit);
+  {
+    const mw = el("div", "typemenu");
+    const tb = el("button", "ghost", "Type");
+    tb.setAttribute("aria-expanded", String(!!sess.menuOpen));
+    tb.onclick = () => { sess.menuOpen = !sess.menuOpen; drawQ(); };
+    mw.append(tb);
+    if (sess.menuOpen){
+      const panel = el("div", "typepanel");
+      for (const [k, v] of Object.entries(visibleTypes())){
+        const b = el("button", k === quiz.type ? "" : "ghost", v);
+        b.onclick = () => { sess.menuOpen = false; qType = k; drawTypes(); startQuiz(); };
+        panel.append(b);
+      }
+      mw.append(panel);
+    }
+    top.append(mw);
+  }
+  const scoreEl = el("span", "score", sess.points + " pts");
+  top.append(scoreEl);
+  run.append(top);
   const bar = el("div", "bar"), fill = el("div", "fill");
-  fill.style.width = Math.round((qi / total) * 100) + "%";
+  fill.style.width = Math.round(sess.correct.size / total * 100) + "%";
   bar.append(fill);
-  run.append(top, bar);
-  run.append(quiz.practice ? el("div", "note", "Practice round: your library quiz isn't changed.") : toolsRow(false));
+  run.append(bar);
 
   const card = el("div", "qcard");
   card.append(el("p", "qtext", q.q));
@@ -680,20 +757,32 @@ function drawQ(){
   function check(val){
     if (answered) return; answered = true;
     const ok = t === "fill_blank" || t === "identification" || t === "solving" ? isRight(q, val) : val === q.answer;
-    if (ok) score++; else missed.push(q);
+    let gained = 0;
+    if (ok){
+      if (!sess.correct.has(idx)){
+        const secs = (Date.now() - sess.qStart) / 1000;
+        gained = Math.max(20, Math.round(100 - secs * 5));
+        sess.points += gained;
+        sess.correct.add(idx);
+      }
+    } else if (!sess.wrong.includes(idx)) sess.wrong.push(idx);
+    scoreEl.textContent = sess.points + " pts";
     fb.className = "feedback " + (ok ? "ok" : "no");
-    fb.textContent = ok ? "Correct!" : "Not quite. The answer is: " + ansText(q);
+    fb.textContent = ok ? "Correct! +" + gained + " pts" : "Not quite. The answer is: " + ansText(q);
     if (q.why) why.textContent = q.why;
     opts.forEach(o => { o.b.disabled = true; if (o.v === q.answer) o.b.classList.add("right"); else if (o.v === val) o.b.classList.add("wrong"); });
     if (input){ input.disabled = true; checkBtn.hidden = true; }
-    top.lastChild.textContent = "Score " + score;
     if (!ok && input){
       const c = el("button", "ghost", "Count as correct");
-      c.onclick = () => { score++; missed = missed.filter(x => x !== q); fb.className = "feedback ok"; fb.textContent = "Counted as correct."; top.lastChild.textContent = "Score " + score; c.remove(); };
+      c.onclick = () => {
+        sess.correct.add(idx); sess.wrong = sess.wrong.filter(x => x !== idx);
+        fb.className = "feedback ok"; fb.textContent = "Counted as correct.";
+        c.remove();
+      };
       actions.append(c);
     }
-    const next = el("button", "", qi + 1 >= total ? "See results" : "Next");
-    next.onclick = () => { qi++; drawQ(); };
+    const next = el("button", "", "Next");
+    next.onclick = () => { sess.queue.shift(); advanceSession(); sess.qStart = Date.now(); drawQ(); };
     actions.append(next); next.focus();
   }
 
@@ -724,6 +813,8 @@ function syncLib(){
   const e = quiz && quiz.savedId ? saved.find(s => s.id === quiz.savedId) : null;
   if (!e) return;
   e.questions = quiz.questions; e.type = quiz.type;
+  e.pool = Object.assign({}, e.pool || {}, { [quiz.type]: quiz.questions });
+  quiz.pool = Object.assign({}, quiz.pool || {}, { [quiz.type]: quiz.questions });
   if (!persist()) runErr = "Couldn't save your changes: browser storage is full.";
 }
 function toolsRow(empty){
@@ -989,36 +1080,19 @@ function drawReviewer(s, keepMode){
   row.append(back, nw, pr); run.append(row);
 }
 function drawResult(run){
-  const n = quiz.questions.length, pct = Math.round(score / n * 100);
+  saveProgress();
+  const n = quiz.questions.length, pct = Math.round(sess.correct.size / n * 100);
   const wrap = el("div", "result");
   const ring = el("div", "ring"); ring.style.setProperty("--p", pct);
-  ring.append(el("b", "", pct + "%"), el("span", "", score + " of " + n + " correct"));
-  wrap.append(ring, el("p", "qtext", pct === 100 ? "Perfect score!" : pct >= 70 ? "Nice work. Review the misses below." : "Keep going. Practice the ones you missed."));
+  ring.append(el("b", "", pct + "%"), el("span", "", sess.points + " pts"));
+  wrap.append(ring, el("p", "qtext", pct === 100 ? "Perfect! You know the whole quiz." : "Keep going. Retake the quiz to improve your progress."));
   run.append(wrap);
-  if (missed.length){
-    run.append(el("div", "course", "To review"));
-    for (const q of missed){
-      const d = el("div", "miss");
-      d.append(el("div", "course", q.q), el("div", "note", "Answer: " + ansText(q)));
-      run.append(d);
-    }
-  }
   const row = el("div", "row");
-  const again = el("button", "", "Retake all");
-  again.onclick = () => { exitPractice(); qi = 0; score = 0; missed = []; runErr = ""; drawQ(); };
-  row.append(again);
-  if (missed.length){
-    const pr = el("button", "ghost", "Practice missed (" + missed.length + ")");
-    pr.onclick = practiceMissed; row.append(pr);
-  }
-  const ed = el("button", "ghost", "Edit questions");
-  ed.onclick = () => { exitPractice(); qi = 0; drawQ(); };
-  const lib = el("button", "ghost", "Library"), nw = el("button", "ghost", "New quiz");
-  lib.onclick = () => showTab("l"); nw.onclick = () => showTab("q");
-  row.append(ed, lib, nw); run.append(row);
+  const again = el("button", "", "Retake"); again.onclick = () => { sess = newSession(quiz); drawQ(); };
+  const lib = el("button", "ghost", "Library"); lib.onclick = () => { sess = null; showTab("l"); };
+  row.append(again, lib); run.append(row);
 }
 
-let libMode = "general";
 function drawSaved(){
   const box = $("q-saved"); box.replaceChildren();
   const chips = el("div", "types"); chips.setAttribute("role", "group"); chips.setAttribute("aria-label", "Library section");
@@ -1040,6 +1114,10 @@ function drawSaved(){
   for (const s of [...list].reverse()){
     const row = el("div", "row"), info = el("div"); info.style.flex = "1 1 160px";
     info.append(el("div", "course", s.name), el("div", "note", TYPES[s.type] + ", " + s.questions.length + (s.type === "reviewer" ? " sections" : " questions")));
+    if (s.type !== "reviewer"){
+      const pb = el("div", "bar"), pf = el("div", "fill"); pb.style.margin = "6px 0"; pf.style.width = (s.progress || 0) + "%";
+      pb.append(pf); info.append(el("div", "note", "Progress: " + (s.progress || 0) + "%"), pb);
+    }
     const go = el("button", "", "Open"), ed = el("button", "ghost", "Edit"), del = el("button", "ghost", "Delete");
     go.onclick = () => (s.type === "reviewer" ? openReviewer(s) : openSaved(s.id));
     ed.onclick = () => { openSaved(s.id); drawQuestionList(); };
@@ -1058,7 +1136,8 @@ function drawSaved(){
 function openSaved(id){
   const s = saved.find(x => x.id === id); if (!s) return;
   qType = s.type; drawTypes();
-  quiz = { type: s.type, questions: s.questions, source: s.source, name: s.name, savedId: s.id };
+  if (!s.pool) s.pool = { [s.type]: s.questions };
+  quiz = { type: s.type, questions: s.questions, source: s.source, name: s.name, savedId: s.id, pool: s.pool };
   qi = 0; score = 0; missed = []; answered = false; runErr = ""; busy = false; token++; $("q-start").disabled = false;
   showTab("r");
 }
@@ -1201,7 +1280,7 @@ async function pushAll(){
   try {
     const uid = currentUserId;
     const aRows = items.map(a => ({ id: String(a.id), user_id: uid, course: a.course, title: a.title || "", due: a.due, done: !!a.done }));
-    const qRows = saved.map(s => ({ id: String(s.id), user_id: uid, name: s.name, type: s.type, mode: s.mode || "general", source: s.source || "", custom: !!s.custom, questions: s.questions || [] }));
+    const qRows = saved.map(s => ({ id: String(s.id), user_id: uid, name: s.name, type: s.type, mode: s.mode || "general", source: s.source || "", custom: !!s.custom, questions: s.questions || [], progress: s.progress || 0, pool: s.pool || {} }));
     if (aRows.length){ const { error } = await sb.from("assignments").upsert(aRows, { onConflict: "user_id,id" }); if (error) throw error; }
     if (qRows.length){ const { error } = await sb.from("quizzes").upsert(qRows, { onConflict: "user_id,id" }); if (error) throw error; }
     await pruneTable("assignments", items.map(a => String(a.id)));
@@ -1219,7 +1298,7 @@ async function pullAndMerge(){
   if (a.error) throw a.error;
   if (q.error) throw q.error;
   const serverA = a.data.map(r => ({ id: Number(r.id), course: r.course, title: r.title || "", due: r.due, done: !!r.done }));
-  const serverQ = q.data.map(r => ({ id: Number(r.id), name: r.name, type: r.type, mode: r.mode || "general", source: r.source || "", custom: !!r.custom, questions: r.questions || [] }));
+  const serverQ = q.data.map(r => ({ id: Number(r.id), name: r.name, type: r.type, mode: r.mode || "general", source: r.source || "", custom: !!r.custom, questions: r.questions || [], progress: r.progress || 0, pool: r.pool || {} }));
   const aIds = new Set(serverA.map(x => String(x.id)));
   const qIds = new Set(serverQ.map(x => String(x.id)));
   items = serverA.concat(items.filter(x => !aIds.has(String(x.id))));
